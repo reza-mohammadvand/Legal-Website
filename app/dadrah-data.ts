@@ -1,0 +1,57 @@
+export type AppointmentSlot = {id:number;startsAt:string;endsAt:string;consultationType:"phone"|"in_person";status:string};
+export type Lawyer = {id:number;name:string;initials:string;field:string;subfields:string[];city:string;rating:number;reviews:number;consults:number;cases:number;experience:number;phonePrice:number;textPrice:number;inPersonPrice:number;online:boolean;featured:boolean;color:string;bio:string;license:string;responseTime:string;inPersonEnabled?:boolean;availableSlots?:AppointmentSlot[];successRate?:number;createdAt?:string};
+export type Article = {id:number;slug:string;category:string;title:string;excerpt:string;body:string;author:string;date:string;readTime:string;color:string};
+export type PublishedAnswer = {id:number;body:string;lawyer:string;createdAt?:string};
+export type LegalQuestion = {id:number;topic:string;title:string;body:string;answer:string;lawyer:string;date:string;answers:number;answerItems?:PublishedAnswer[]};
+export type LegalService = {title:string;text:string;icon:string;count:number};
+export type Testimonial = {name:string;type:string;rating:number;text:string;lawyerId?:number;lawyerName?:string;consultationType?:"phone"|"in_person";date?:string};
+export type Faq = {id:number;category:string;question:string;answer:string};
+export type PublicSettings = {siteName:string;commissionRate:number;defaultPhonePrice:number;defaultInPersonPrice:number;supportPhone:string;supportEmail:string;supportAddress:string;questionsEnabled:boolean;globalInPersonEnabled:boolean;maintenanceMode:boolean};
+
+export const faqs:Faq[]=[
+ {id:1,category:"حریم خصوصی",question:"چه کسانی به اطلاعات و مدارک من دسترسی دارند؟",answer:"فقط خود شما، وکیل مرتبط و مدیران مجاز سامانه به اطلاعات لازم برای ارائه و پیگیری خدمت دسترسی دارند."},
+ {id:2,category:"انتخاب وکیل",question:"چطور وکیل مناسب را پیدا کنم؟",answer:"موضوع، شهر، امتیاز و هزینه را در فهرست وکلا مقایسه کنید یا درخواست خود را ثبت کنید تا برای وکیل مرتبط ارسال شود."},
+ {id:3,category:"مشاوره",question:"مدت مشاوره تلفنی چقدر است؟",answer:"مدت هر جلسه پیش از رزرو در جزئیات خدمت نمایش داده می‌شود و معمولاً تا ۳۰ دقیقه است."},
+];
+
+export const publicSettings:PublicSettings={siteName:"دادراه",commissionRate:0,defaultPhonePrice:0,defaultInPersonPrice:0,supportPhone:"۰۲۱-۹۱۰۹ ۲۰۲۰",supportEmail:"support@dadrah.ir",supportAddress:"تهران، میدان ونک",questionsEnabled:true,globalInPersonEnabled:true,maintenanceMode:false};
+
+export const lawyers:Lawyer[]=[
+ {id:1,name:"دکتر نازنین فرهمند",initials:"نف",field:"خانواده و طلاق",subfields:["مهریه","حضانت","نفقه"],city:"تهران",rating:4.9,reviews:214,consults:486,cases:312,experience:12,phonePrice:480000,textPrice:0,inPersonPrice:850000,online:true,featured:true,color:"#e8eaf6",bio:"وکیل پایه یک دادگستری با تمرکز بر پرونده‌های خانواده. رویکرد من ارائه راه‌حل روشن، کم‌تنش و متناسب با شرایط واقعی هر خانواده است.",license:"۲۳۴۵۶",responseTime:"کمتر از ۳۰ دقیقه"},
+ {id:2,name:"امیرحسین دادخواه",initials:"اد",field:"دعاوی کیفری",subfields:["جرایم رایانه‌ای","کلاهبرداری","دادسرا"],city:"شیراز",rating:4.8,reviews:176,consults:391,cases:284,experience:10,phonePrice:550000,textPrice:0,inPersonPrice:900000,online:true,featured:true,color:"#fff8e1",bio:"متخصص دفاع کیفری و پیگیری پرونده‌ها از مرحله تحقیقات مقدماتی تا دادگاه، با تأکید بر حفظ محرمانگی و اطلاع‌رسانی دقیق.",license:"۱۹۸۷۴",responseTime:"کمتر از ۱ ساعت"},
+ {id:3,name:"سارا نیک‌اندیش",initials:"سن",field:"ملکی و قراردادها",subfields:["مشارکت در ساخت","سرقفلی","تنظیم قرارداد"],city:"اصفهان",rating:4.7,reviews:142,consults:328,cases:230,experience:9,phonePrice:420000,textPrice:0,inPersonPrice:780000,online:false,featured:false,color:"#e8f5e9",bio:"مشاور حقوقی قراردادها و دعاوی ملکی با رویکرد پیشگیرانه؛ قبل از امضا خطرها را شناسایی می‌کنیم و در اختلاف، مسیر عملی پیشنهاد می‌دهیم.",license:"۲۸۱۱۰",responseTime:"حداکثر ۳ ساعت"},
+ {id:4,name:"محمدرضا توکلی",initials:"مت",field:"تجاری و شرکت‌ها",subfields:["ثبت شرکت","اختلاف شرکا","قرارداد تجاری"],city:"تهران",rating:4.9,reviews:121,consults:274,cases:198,experience:14,phonePrice:620000,textPrice:0,inPersonPrice:1100000,online:true,featured:true,color:"#f3e5f5",bio:"همراه حقوقی کسب‌وکارها در قراردادها، ساختار شرکتی و اختلاف شرکا؛ با تجربه همکاری مستمر با شرکت‌های نوپا و باسابقه.",license:"۱۵۶۰۲",responseTime:"کمتر از ۴۵ دقیقه"},
+ {id:5,name:"الهام رستگار",initials:"ار",field:"ارث و امور ثبتی",subfields:["انحصار وراثت","تقسیم ترکه","ثبت اسناد"],city:"تبریز",rating:4.6,reviews:98,consults:219,cases:167,experience:8,phonePrice:390000,textPrice:0,inPersonPrice:720000,online:false,featured:false,color:"#fce4ec",bio:"پیگیری دقیق پرونده‌های ارث، تقسیم ترکه و امور ثبتی با توضیح مرحله‌به‌مرحله مسیر برای همه اعضای خانواده.",license:"۳۱۰۹۸",responseTime:"حداکثر ۴ ساعت"},
+ {id:6,name:"پویان شریعتی",initials:"پش",field:"کار و تأمین اجتماعی",subfields:["حقوق کار","بیمه","اخراج"],city:"مشهد",rating:4.8,reviews:87,consults:204,cases:145,experience:11,phonePrice:450000,textPrice:0,inPersonPrice:760000,online:true,featured:false,color:"#e0f2f1",bio:"وکیل و مشاور روابط کار، مطالبات مزدی، بیمه و اختلافات کارگر و کارفرما.",license:"۲۲۷۰۱",responseTime:"کمتر از ۱ ساعت"},
+];
+
+export const services:LegalService[]=[
+ {title:"دعاوی کیفری",text:"دفاع و پیگیری تخصصی در دادسرا و دادگاه",icon:"ShieldCheck",count:12},
+ {title:"خانواده و طلاق",text:"مهریه، حضانت، نفقه و اختلافات خانوادگی",icon:"HeartHandshake",count:9},
+ {title:"دعاوی ملکی",text:"سند، سرقفلی، اجاره و مشارکت در ساخت",icon:"Building2",count:11},
+ {title:"قرارداد و تجارت",text:"تنظیم قرارداد و اختلاف شرکت‌ها و شرکا",icon:"BriefcaseBusiness",count:8},
+ {title:"چک و مطالبات",text:"چک، سفته، ضمانت و وصول مطالبات",icon:"FileCheck2",count:7},
+ {title:"ارث و ثبت",text:"انحصار وراثت، تقسیم ترکه و امور ثبتی",icon:"Landmark",count:6},
+ {title:"کار و بیمه",text:"حقوق معوقه، اخراج، بیمه و قرارداد کار",icon:"UsersRound",count:5},
+ {title:"جرایم رایانه‌ای",text:"کلاهبرداری اینترنتی، هک و نشر اکاذیب",icon:"MonitorSmartphone",count:4},
+];
+
+export const questions:LegalQuestion[]=[
+ {id:1,topic:"خانواده",title:"برای مطالبه مهریه از کجا شروع کنم؟",body:"همسرم مالی به نام خودش دارد اما نمی‌دانم ابتدا باید به ثبت مراجعه کنم یا دادگاه.",answer:"اگر سند ازدواج رسمی است، آغاز از اجرای ثبت معمولاً مسیر نخست است. پس از استعلام اموال، اگر مالی شناسایی نشد یا ادامه مسیر ممکن نبود، دادخواست در دادگاه خانواده مطرح می‌شود. انتخاب دقیق مسیر به وضعیت دارایی و خواسته شما بستگی دارد.",lawyer:"دکتر نازنین فرهمند",date:"امروز",answers:3},
+ {id:2,topic:"ملکی",title:"قرارداد اجاره بدون کد رهگیری اعتبار دارد؟",body:"قرارداد دست‌نویس داریم و دو شاهد هم امضا کرده‌اند.",answer:"بله، نبود کد رهگیری به‌تنهایی قرارداد را بی‌اعتبار نمی‌کند. امضاها، تاریخ، مبلغ و مشخص بودن عین مستأجره برای اثبات رابطه قراردادی اهمیت دارند.",lawyer:"سارا نیک‌اندیش",date:"دیروز",answers:2},
+ {id:3,topic:"کار و بیمه",title:"حق سنوات بعد از استعفا پرداخت می‌شود؟",body:"پس از چهار سال کار استعفا داده‌ام و کارفرما می‌گوید سنوات تعلق نمی‌گیرد.",answer:"استعفا مانع دریافت سنوات نیست. مزایای پایان کار به نسبت مدت کارکرد و بر مبنای آخرین مزد محاسبه می‌شود.",lawyer:"پویان شریعتی",date:"۲ روز پیش",answers:4},
+ {id:4,topic:"قرارداد",title:"برای فسخ قرارداد مشارکت چه مدرکی لازم است؟",body:"طرف مقابل تعهدات زمانی خود را انجام نداده و پروژه متوقف شده است.",answer:"متن قرارداد، الحاقیه‌ها، اظهارنامه‌های ارسالی و مدارک اثبات تأخیر یا عدم انجام تعهد باید بررسی شوند. حق فسخ باید از قرارداد یا قانون قابل استناد باشد.",lawyer:"محمدرضا توکلی",date:"۳ روز پیش",answers:2},
+];
+
+export const articles:Article[]=[
+ {id:1,slug:"mehrieh-guide",category:"خانواده",title:"راهنمای کامل مطالبه مهریه در سال ۱۴۰۵",excerpt:"از انتخاب مسیر اجرای ثبت تا مدارک، هزینه‌ها و نکات مهم توقیف اموال.",body:"مطالبه مهریه می‌تواند از اجرای ثبت یا دادگاه خانواده آغاز شود. انتخاب مسیر مناسب به سند رسمی ازدواج، دارایی‌های قابل شناسایی و وضعیت پرونده بستگی دارد.\n\nپیش از اقدام، اصل یا رونوشت سند ازدواج، مدارک هویتی و هر اطلاعاتی درباره اموال احتمالی را آماده کنید. در مسیر ثبت، امکان استعلام و توقیف اموال وجود دارد. اگر مالی شناسایی نشود یا پرونده از مسیر ثبت قابل پیگیری نباشد، مراجعه به دادگاه خانواده مطرح می‌شود.\n\nهر پرونده جزئیات خودش را دارد؛ تصمیم عجولانه درباره بخشش، تقسیط یا توقیف می‌تواند آثار بلندمدت داشته باشد.",author:"تحریریه دادراه",date:"۲۸ مرداد ۱۴۰۵",readTime:"۷ دقیقه",color:"indigo"},
+ {id:2,slug:"contract-seven-clauses",category:"قراردادها",title:"۷ بند مهم که پیش از امضای قرارداد باید بخوانید",excerpt:"تعهدات، خسارت و شرایط فسخ را طوری بنویسید که بعداً گرفتار اختلاف نشوید.",body:"یک قرارداد خوب فقط موضوع و مبلغ نیست. مشخصات دقیق طرفین، موضوع قابل اندازه‌گیری، زمان‌بندی تعهدات، شیوه پرداخت، تضمین‌ها، خسارت تأخیر، شرایط فسخ و مرجع حل اختلاف باید روشن باشند.\n\nعبارت‌های کلی مانند «در اسرع وقت» یا «کیفیت مناسب» در زمان اختلاف دردسرساز می‌شوند. تاریخ، معیار کیفیت و نتیجه عدم انجام تعهد را دقیق بنویسید.\n\nپیش از امضا، تمام پیوست‌ها را بخوانید و نسخه یکسان و امضاشده دریافت کنید.",author:"سارا نیک‌اندیش",date:"۲۱ مرداد ۱۴۰۵",readTime:"۶ دقیقه",color:"gold"},
+ {id:3,slug:"property-checks",category:"ملکی",title:"استعلام‌هایی که پیش از خرید ملک نباید فراموش کنید",excerpt:"یک چک‌لیست کاربردی برای بررسی سند، بازداشت، بدهی و هویت فروشنده.",body:"پیش از پرداخت بیعانه، اصالت سند و هویت مالک را کنترل کنید. رهن، بازداشت، بدهی شهرداری و وضعیت پایان کار می‌توانند انتقال رسمی را متوقف کنند.\n\nمشخصات ملک را با سند و وضعیت موجود تطبیق دهید. در املاک ورثه‌ای، گواهی انحصار وراثت و رضایت همه وراث ضروری است.\n\nپرداخت را مرحله‌بندی و هر مرحله را به یک تعهد قابل بررسی متصل کنید.",author:"تحریریه دادراه",date:"۱۵ مرداد ۱۴۰۵",readTime:"۵ دقیقه",color:"green"},
+ {id:4,slug:"cyber-fraud",category:"کیفری",title:"بعد از کلاهبرداری اینترنتی چه کنیم؟",excerpt:"اقدام‌های فوری برای حفظ ادله، مسدودسازی و ثبت شکایت مؤثر.",body:"رسید پرداخت، پیام‌ها، نشانی صفحات، شماره تماس و هر داده‌ای که هویت یا مسیر انتقال وجه را نشان می‌دهد ذخیره کنید. موضوع را سریع به بانک و پلیس فتا اطلاع دهید.\n\nاطلاعات خود را عمومی منتشر نکنید و از تهدید طرف مقابل بپرهیزید. ثبت دقیق زمان و شیوه ارتباط برای پیگیری اهمیت دارد.",author:"امیرحسین دادخواه",date:"۱۰ مرداد ۱۴۰۵",readTime:"۴ دقیقه",color:"rose"},
+];
+
+export const testimonials:Testimonial[]=[
+ {name:"مریم شریفی",type:"مشاوره ملکی",rating:5,text:"برای خرید ملک مردد بودم. وکیل همه استعلام‌ها را به زبان ساده توضیح داد و جلوی یک تصمیم پرریسک را گرفت."},
+ {name:"آرمان توکلی",type:"مشاوره قرارداد",rating:5,text:"در کمتر از یک ساعت صحبت کردیم و همان روز بندهای قرارداد اصلاح شد. مسیر پیگیری کاملاً روشن بود."},
+ {name:"سمانه احمدی",type:"پرسش خانواده",rating:4.8,text:"بدون اینکه مجبور باشم جزئیات خصوصی را عمومی کنم، چند پاسخ تخصصی گرفتم و وکیل مناسبم را انتخاب کردم."},
+];

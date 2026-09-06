@@ -1,20 +1,26 @@
 {
-  "name": "site-creator-vinext-starter",
+  "name": "dadrah-local-platform",
   "version": "0.1.0",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "vinext dev",
+    "dev": "node scripts/dev-local.mjs",
+    "dev:web": "vinext dev",
+    "dev:api": "node server/local-api.mjs",
     "build": "vinext build",
     "start": "vinext start",
-    "test": "npm run build && node --test tests/rendered-html.test.mjs",
+    "test": "npm run build && node --test --test-concurrency=1 tests/rendered-html.test.mjs tests/api-workflow.test.mjs",
+    "test:api": "node --test tests/api-workflow.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "db:check": "node scripts/check-schema.mjs",
+    "db:reset": "node server/reset-db.mjs"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",
+    "lucide-react": "^1.39.0",
     "next": "16.2.6",
     "react": "19.2.6",
     "react-dom": "19.2.6"
