@@ -4,8 +4,6 @@ Dadrah is a full-stack, Persian-language legal consultation platform built for l
 
 The project runs entirely on your machine. It does not require a hosted backend, an external database, or a ChatGPT-hosted domain.
 
-![Dadrah legal consultation platform](public/og.png)
-
 ## Highlights
 
 - Persian, right-to-left interface using the local Sahel font family
