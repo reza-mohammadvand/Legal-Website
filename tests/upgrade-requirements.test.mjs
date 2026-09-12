@@ -257,8 +257,8 @@ test("offers all four site-selected services with a reusable free-versus-paid no
     assert.ok(optionArea.includes(`"${mode}"`) || optionArea.includes(`'${mode}'`),
       `The site-selected flow is missing ${mode}`);
   }
-  assert.match(optionArea, /(?:پرسش|متنی)[^<\n]{0,40}رایگان/);
-  assert.match(optionArea, /متنی[^<\n]{0,50}(?:پولی|پرداخت)|(?:پولی|پرداخت)[^<\n]{0,50}متنی/);
+  assert.match(optionArea, /مشاوره[^<\n]{0,20}رایگان/);
+  assert.doesNotMatch(optionArea, /مشاوره متنی پولی/);
   assert.match(optionArea, /تلفنی/);
   assert.match(optionArea, /حضوری/);
 
@@ -266,7 +266,7 @@ test("offers all four site-selected services with a reusable free-versus-paid no
   let notice;
   for (const match of app.matchAll(noticeDeclaration)) {
     const body = app.slice(match.index, match.index + 2_400);
-    if (/رایگان/.test(body) && /پولی|پرداخت/.test(body) && /پشت[\s‌-]*سر[\s‌-]*هم|متوالی/.test(body)) {
+    if (/رایگان/.test(body) && /پولی|پرداخت|غیررایگان/.test(body) && /پشت[\s‌-]*سر[\s‌-]*هم|متوالی/.test(body)) {
       notice = { name: match[1], body };
       break;
     }
@@ -276,6 +276,46 @@ test("offers all four site-selected services with a reusable free-versus-paid no
   assert.match(notice.body, /نوبت/);
   const uses = app.match(new RegExp(`<${notice.name}\\b`, "g")) || [];
   assert.ok(uses.length >= 2, "The free-versus-paid notice should be reused at text-service choices");
+});
+
+test("uses the requested consultation titles and keeps specialty cards uncluttered", async () => {
+  const [app, css] = await Promise.all([
+    source("app/dadrah-app.tsx"),
+    source("app/globals.css"),
+  ]);
+  const specialtyCard = section(app, "function SpecialtyCard", "function LawyersPage");
+
+  for (const title of ["مشاوره رایگان", "مشاوره متنی", "مشاوره تلفنی", "مشاوره حضوری"]) {
+    assert.ok(app.includes(title), `Missing consultation title: ${title}`);
+  }
+  assert.ok(!app.includes("مشاوره متنی پولی"), "The paid text option title must be shown as مشاوره متنی");
+  assert.ok(!specialtyCard.includes("specialty-card-meta"), "The specialty front should not show its old detail/count footer");
+  assert.ok(!specialtyCard.includes("specialty-back-reset"), "The specialty back should return automatically when hover ends");
+  assert.match(specialtyCard, /onMouseLeave=/);
+  assert.match(specialtyCard, /specialty-lawyers-button/);
+  assert.match(css, /\.specialty-card\.is-flipped\s+\.specialty-card-inner\s*\{[^}]*rotateY\(180deg\)/i);
+});
+
+test("persists an administrator-controlled urgent surcharge and styles form controls consistently", async () => {
+  const [app, api, database, schema, migration, css] = await Promise.all([
+    source("app/dadrah-app.tsx"),
+    source("server/local-api.mjs"),
+    source("server/db.mjs"),
+    source("db/schema.ts"),
+    source("drizzle/0000_dadrah_core.sql"),
+    source("app/globals.css"),
+  ]);
+  const persistence = `${database}\n${schema}\n${migration}`;
+
+  assertIncludesEvery(persistence, ["urgent_surcharge_percent", "urgent_surcharge_rate", "urgent_surcharge_amount", "base_amount"], "Urgent pricing persistence");
+  assert.match(api, /urgent\s*\?\s*settingNumber\(\s*["']urgent_surcharge_percent["']/);
+  assert.match(api, /const\s+amount\s*=\s*baseAmount\s*\+\s*urgentSurchargeAmount/);
+  assert.match(api, /\[\s*["']site_commission["']\s*,\s*["']urgent_surcharge_percent["']\s*\]/);
+  assert.match(app, /name=["']urgentSurcharge["']/);
+  assert.match(app, /urgentSurchargeAmount|urgentFee/);
+  assert.match(css, /:is\(input[^{}]*select,textarea\)\s*\{[^}]*border-radius\s*:\s*7px/i);
+  assert.match(css, /:focus\s*\{[^}]*box-shadow\s*:/i);
+  assert.match(css, /\[data-theme=dark\][^{}]*:is\(input[^{}]*select,textarea\)/i);
 });
 
 test("shows phone attachments outside chat and themes notice and management surfaces", async () => {

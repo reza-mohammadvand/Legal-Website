@@ -109,6 +109,10 @@ function installSchema() {
       topic TEXT NOT NULL,
       description TEXT,
       scheduled_at TEXT,
+      urgent INTEGER NOT NULL DEFAULT 0,
+      base_amount INTEGER NOT NULL DEFAULT 0,
+      urgent_surcharge_rate REAL NOT NULL DEFAULT 0,
+      urgent_surcharge_amount INTEGER NOT NULL DEFAULT 0,
       amount INTEGER NOT NULL DEFAULT 0,
       payment_status TEXT NOT NULL DEFAULT 'simulated_paid',
       status TEXT NOT NULL DEFAULT 'registered',
@@ -262,6 +266,10 @@ function installSchema() {
   ensureColumn("consultations", "source_question_id", "INTEGER REFERENCES questions(id)");
   ensureColumn("consultations", "message_limit", "INTEGER NOT NULL DEFAULT 3 CHECK(message_limit > 0)");
   ensureColumn("consultations", "description", "TEXT");
+  ensureColumn("consultations", "urgent", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn("consultations", "base_amount", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn("consultations", "urgent_surcharge_rate", "REAL NOT NULL DEFAULT 0");
+  ensureColumn("consultations", "urgent_surcharge_amount", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn("orders", "type", "TEXT NOT NULL DEFAULT 'phone'");
   ensureColumn("orders", "commission_rate", "REAL NOT NULL DEFAULT 0");
   ensureColumn("orders", "commission_amount", "INTEGER NOT NULL DEFAULT 0");
@@ -428,7 +436,7 @@ function addSeedSettings() {
   if (!admin) return;
   adminPermissionNames.forEach((permission) => db.prepare("INSERT OR IGNORE INTO admin_permissions(admin_id,permission) VALUES(?,?)").run(admin.id, permission));
   [
-    ["site_name", "دادراه"], ["site_commission", "15"],
+    ["site_name", "دادراه"], ["site_commission", "15"], ["urgent_surcharge_percent", "20"],
     ["default_phone_price", "480000"], ["default_in_person_price", "850000"],
     ["default_text_price", "250000"],
     ["site_views", "12480"], ["max_question_lawyers", "3"],
@@ -576,12 +584,13 @@ function backfillNewFields() {
   db.prepare("UPDATE articles SET author_user_id=(SELECT id FROM users WHERE first_name || ' ' || last_name=articles.author LIMIT 1) WHERE author_user_id IS NULL").run();
   db.prepare("UPDATE articles SET author_avatar=COALESCE((SELECT avatar_url FROM users WHERE id=articles.author_user_id),'/avatars/default-admin.png') WHERE author_avatar IS NULL OR trim(author_avatar)=''").run();
   if (!db.prepare("SELECT 1 FROM settings WHERE key='paid_text_seed_v1'").get()) {
-    db.prepare("UPDATE lawyers SET text_price=? WHERE text_price=0").run(Number(db.prepare("SELECT value FROM settings WHERE key='default_text_price'").get()?.value || 250000));
+    db.prepare("UPDATE lawyers SET text_price=? WHERE text_price=0").run(Number(db.prepare("SELECT value FROM settings WHERE key='text_price_min'").get()?.value || 50000));
     db.prepare("INSERT INTO settings(key,value) VALUES('paid_text_seed_v1','1')").run();
   }
   const rate = Number(db.prepare("SELECT value FROM settings WHERE key='site_commission'").get()?.value || 15);
   db.prepare("UPDATE orders SET commission_rate=? WHERE commission_rate IS NULL OR commission_rate=0").run(rate);
   db.prepare("UPDATE orders SET commission_amount=ROUND(amount*commission_rate/100.0) WHERE commission_amount IS NULL OR commission_amount=0").run();
+  db.prepare("UPDATE consultations SET base_amount=amount WHERE base_amount=0 AND amount>0").run();
   db.prepare("UPDATE orders SET paid_at=COALESCE(paid_at,created_at) WHERE status='paid'").run();
   db.prepare("UPDATE messages SET updated_at=COALESCE(updated_at,created_at,CURRENT_TIMESTAMP)").run();
 }

@@ -490,7 +490,7 @@ button{max-width:100%}p,small,label,h1,h2,h3,h4,b,strong{overflow-wrap:break-wor
 .specialty-card-front{
   display:grid;
   grid-template-columns:48px minmax(0,1fr);
-  grid-template-rows:auto 1fr auto;
+  grid-template-rows:auto;
   align-content:start;
   gap:15px;
   padding:23px;
@@ -515,21 +515,6 @@ button{max-width:100%}p,small,label,h1,h2,h3,h4,b,strong{overflow-wrap:break-wor
 .specialty-front-copy{min-width:0;display:flex;flex-direction:column;align-self:center}
 .specialty-front-copy b{margin:0 0 7px;font-size:16px;line-height:1.7;color:#fff}
 .specialty-front-copy small{font-size:10px;line-height:2;color:var(--specialty-front-muted)}
-.specialty-card-meta{
-  grid-column:1/-1;
-  align-self:end;
-  min-width:0;
-  padding-top:14px;
-  border-top:1px solid rgba(255,255,255,.16);
-  display:flex;
-  align-items:center;
-  gap:5px;
-  color:var(--specialty-front-muted);
-  font-size:10px;
-}
-.specialty-card-meta strong{margin:0;color:#fff;font-size:15px}
-.specialty-card-meta>span{margin-inline-start:auto;display:inline-flex;align-items:center;gap:4px;color:var(--gold);font-weight:700;white-space:nowrap}
-.specialty-card-meta svg{width:15px;height:15px}
 .specialty-card-back{
   transform:rotateY(180deg);
   display:flex;
@@ -564,12 +549,10 @@ button{max-width:100%}p,small,label,h1,h2,h3,h4,b,strong{overflow-wrap:break-wor
 }
 .specialty-card-back>ul li{min-width:0;display:flex;align-items:flex-start;gap:5px;color:var(--specialty-back-ink);font-size:9px;line-height:1.8}
 .specialty-card-back>ul svg{width:14px;height:14px;margin-top:2px;flex:0 0 14px;color:var(--success)}
-.specialty-card-back>footer{margin-top:auto;padding-top:10px;border-top:1px solid var(--specialty-back-border);display:grid;grid-template-columns:auto minmax(0,1fr);gap:7px}
+.specialty-card-back>footer{margin-top:auto;padding-top:10px;border-top:1px solid var(--specialty-back-border);display:grid;grid-template-columns:1fr;gap:7px}
 .specialty-card-back>footer button{min-height:40px;border-radius:5px;padding:8px 10px;display:flex;align-items:center;justify-content:center;gap:5px;font-size:10px;font-weight:700}
 .specialty-card-back>footer svg{width:15px;height:15px}
-.specialty-back-reset{border:1px solid var(--specialty-back-border);background:transparent;color:var(--specialty-back-muted)}
 .specialty-lawyers-button{border:1px solid var(--gold);background:var(--gold);color:#18205c}
-.specialty-back-reset:hover{border-color:var(--primary);color:var(--primary)}
 .specialty-lawyers-button:hover{background:#f6cd2c;border-color:#f6cd2c}
 
 .form-grid>.specialty-picker{grid-column:1/-1}
@@ -660,7 +643,6 @@ button{max-width:100%}p,small,label,h1,h2,h3,h4,b,strong{overflow-wrap:break-wor
   .specialty-card:hover .specialty-card-front{border-color:var(--specialty-front-border);box-shadow:0 12px 30px rgba(8,13,58,.14)}
   .specialty-card-front,.specialty-card-back{min-height:296px}
   .specialty-card,.specialty-card-inner{min-height:296px}
-  .specialty-card-meta>span{min-height:38px;padding:5px 0}
   .specialty-card-back>footer button{min-height:44px}
 }
 @media(prefers-reduced-motion:reduce){
@@ -744,3 +726,44 @@ button{max-width:100%}p,small,label,h1,h2,h3,h4,b,strong{overflow-wrap:break-wor
  .specialty-admin-list>div{grid-template-columns:38px minmax(0,1fr) 58px}.specialty-admin-list>div>label{grid-column:2}.specialty-admin-list .row-actions{grid-column:3;grid-row:1/3}
 }
 @media(prefers-reduced-motion:reduce){.home-hero .hero-slides img{transition:none;transform:none}.hero-pagination button{transition:none}}
+
+/* Consistent, accessible controls across public forms, modals, and dashboards. */
+:is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]),select,textarea){
+ width:100%;
+ min-height:46px;
+ padding:10px 13px;
+ border:1px solid var(--line);
+ border-radius:7px;
+ background:var(--surface);
+ color:var(--ink);
+ line-height:1.8;
+ caret-color:var(--primary);
+ box-shadow:inset 0 1px 2px rgba(20,24,38,.035);
+}
+textarea{min-height:116px;resize:vertical}
+.textarea-label textarea{padding-bottom:32px}
+select{cursor:pointer;padding-inline-end:34px}
+:is(input,textarea)::placeholder{color:#8a90a2;opacity:1}
+:is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]),select,textarea):hover:not(:disabled):not([readonly]){border-color:#aeb5cf}
+:is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]),select,textarea):focus{border-color:var(--primary);outline:0;box-shadow:0 0 0 4px var(--primary-50),inset 0 1px 2px rgba(20,24,38,.03)}
+:is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]),select,textarea):focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+:is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]),select,textarea):disabled,
+:is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]),select,textarea)[readonly]{background:var(--background);color:var(--muted);cursor:not-allowed;opacity:.78}
+:where(.form-grid,.settings-form,.support-form,.profile-form,.modal form,.contact-page form) label:not(.consent):not(.urgent-check):not(.media-upload-button){display:flex;flex-direction:column;gap:7px;color:var(--ink);font-size:12px;font-weight:700;line-height:1.8}
+:where(.form-grid,.settings-form,.support-form,.profile-form,.modal form,.contact-page form) label>small{color:var(--muted);font-size:10px;font-weight:400;line-height:1.8}
+.form-grid{gap:16px}.settings-form{gap:15px}
+.result-toolbar select,.report-filters select,.document-kind select,.chat-layout>section>header>select{width:auto!important}
+.urgent-check,.consent{border:1px solid transparent;border-radius:7px;transition:border-color .18s,background-color .18s,box-shadow .18s}
+.urgent-check:hover,.consent:hover{border-color:#c8cde0}
+.urgent-check:has(input:checked){border-color:var(--gold);background:var(--gold-100);box-shadow:inset 3px 0 var(--gold)}
+.urgent-check.consult-urgent{margin:14px 0;padding:13px 14px;border:1px solid #ead265;border-radius:7px;background:var(--gold-100)}
+.urgent-check.consult-urgent small{font-size:10px;line-height:1.9}
+[data-theme=dark] :is(input,textarea)::placeholder{color:#8992a5}
+[data-theme=dark] :is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]),select,textarea){box-shadow:inset 0 1px 2px rgba(0,0,0,.2)}
+[data-theme=dark] :is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]),select,textarea){color-scheme:dark}
+[data-theme=dark] :is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]),select,textarea):hover:not(:disabled):not([readonly]){border-color:#59637a}
+[data-theme=dark] option{background:var(--surface);color:var(--ink)}
+.chat-layout>section>footer textarea{min-height:42px!important}
+.change-lawyer-action{width:100%;min-height:43px;margin:12px 0 0;padding:10px 13px;border:1px solid #c9cee2;border-radius:6px;background:var(--surface);color:var(--primary);display:flex;align-items:center;justify-content:center;gap:8px;font-size:11px;font-weight:800;transition:border-color .18s,background-color .18s,transform .18s}.change-lawyer-action:hover{border-color:var(--primary);background:var(--primary-50);transform:translateY(-1px)}.change-lawyer-action svg{width:17px;height:17px}.change-lawyer-action svg:last-child{margin-right:auto}
+.pricing-range-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;margin:0 0 18px;border:1px solid var(--line);border-radius:7px;overflow:hidden;background:var(--line)}.pricing-range-summary>span{min-width:0;padding:13px;background:var(--background);display:flex;flex-direction:column;gap:5px}.pricing-range-summary b{font-size:11px;color:var(--ink)}.pricing-range-summary small{font-size:9px;line-height:1.8;color:var(--primary)}
+@media(max-width:520px){:is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]),select,textarea){min-height:48px;font-size:16px!important}.urgent-check.consult-urgent{padding:12px}.pricing-range-summary{grid-template-columns:1fr}.change-lawyer-action{min-height:46px}}

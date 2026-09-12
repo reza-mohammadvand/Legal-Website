@@ -19,6 +19,7 @@ The project runs entirely on your machine. It does not require a hosted backend,
 - Separate lawyer answers shown to the client as soon as each one arrives, with administrator-controlled public publication
 - Paid text consultations with separate, configurable conversation-turn quotas for clients and lawyers
 - Support-coordinated phone consultations and slot-based in-person booking
+- Administrator-configurable urgent-request surcharge with a server-calculated price breakdown
 - Atomic appointment-slot reservation to prevent double booking
 - Simulated local checkout, payment tracking, cancellation, and refund states
 - Secure text-consultation rooms, persisted chat messages, consultation-specific attachments, and visible tracking codes
@@ -114,6 +115,8 @@ An authorized administrator can also cancel a free question as a whole. Cancella
 3. After the simulated checkout, a private conversation is opened.
 4. The client and lawyer can each use three conversation turns by default. Multiple consecutive messages from the same person count as one turn.
 5. The conversation closes after both participants use their turn quotas; the administrator can change the quota for future consultations.
+
+For text, phone, and in-person services, the client can mark a request as urgent. The API calculates the configured surcharge from the stored lawyer tariff, records the base amount and surcharge separately, and uses the final amount for the order and commission.
 
 ### Phone consultation
 

@@ -6,7 +6,7 @@ export type LegalQuestion = {id:number;topic:string;title:string;body:string;ans
 export type LegalService = {id:number;title:string;text:string;backText:string;caseTypes:string[];icon:string;count:number};
 export type Testimonial = {name:string;type:string;rating:number;text:string;lawyerId?:number;lawyerName?:string;consultationType?:"phone"|"text"|"in_person";date?:string};
 export type Faq = {id:number;category:string;question:string;answer:string};
-export type PublicSettings = {raw?:Record<string,unknown>;stats?:Record<string,number>;footerConfig?:unknown;trustItems?:unknown[];termsContent?:string;privacyContent?:string;logoLightUrl?:string;logoDarkUrl?:string;faviconUrl?:string;heroImages?:string[];siteName:string;commissionRate:number;defaultPhonePrice:number;defaultInPersonPrice:number;supportPhone:string;supportEmail:string;supportAddress:string;questionsEnabled:boolean;globalInPersonEnabled:boolean;maintenanceMode:boolean};
+export type PublicSettings = {raw?:Record<string,unknown>;stats?:Record<string,number>;footerConfig?:unknown;trustItems?:unknown[];termsContent?:string;privacyContent?:string;logoLightUrl?:string;logoDarkUrl?:string;faviconUrl?:string;heroImages?:string[];siteName:string;commissionRate:number;urgentSurchargePercent?:number;supportPhone:string;supportEmail:string;supportAddress:string;questionsEnabled:boolean;globalInPersonEnabled:boolean;maintenanceMode:boolean};
 
 export const faqs:Faq[]=[
  {id:1,category:"حریم خصوصی",question:"چه کسانی به اطلاعات و مدارک من دسترسی دارند؟",answer:"فقط خود شما، وکیل مرتبط و مدیران مجاز سامانه به اطلاعات لازم برای ارائه و پیگیری خدمت دسترسی دارند."},
@@ -14,7 +14,7 @@ export const faqs:Faq[]=[
  {id:3,category:"مشاوره",question:"مدت مشاوره تلفنی چقدر است؟",answer:"مدت هر جلسه پیش از رزرو در جزئیات خدمت نمایش داده می‌شود و معمولاً تا ۳۰ دقیقه است."},
 ];
 
-export const publicSettings:PublicSettings={siteName:"دادراه",commissionRate:0,defaultPhonePrice:0,defaultInPersonPrice:0,supportPhone:"۰۲۱-۹۱۰۹ ۲۰۲۰",supportEmail:"support@dadrah.ir",supportAddress:"تهران، میدان ونک",questionsEnabled:true,globalInPersonEnabled:true,maintenanceMode:false};
+export const publicSettings:PublicSettings={siteName:"دادراه",commissionRate:0,urgentSurchargePercent:20,supportPhone:"۰۲۱-۹۱۰۹ ۲۰۲۰",supportEmail:"support@dadrah.ir",supportAddress:"تهران، میدان ونک",questionsEnabled:true,globalInPersonEnabled:true,maintenanceMode:false};
 
 export const lawyers:Lawyer[]=[
  {id:1,name:"دکتر نازنین فرهمند",initials:"نف",field:"خانواده و طلاق",subfields:["مهریه","حضانت","نفقه"],city:"تهران",rating:4.9,reviews:214,consults:486,cases:312,experience:12,phonePrice:480000,textPrice:0,inPersonPrice:850000,online:true,featured:true,color:"#e8eaf6",bio:"وکیل پایه یک دادگستری با تمرکز بر پرونده‌های خانواده. رویکرد من ارائه راه‌حل روشن، کم‌تنش و متناسب با شرایط واقعی هر خانواده است.",license:"۲۳۴۵۶",responseTime:"کمتر از ۳۰ دقیقه"},

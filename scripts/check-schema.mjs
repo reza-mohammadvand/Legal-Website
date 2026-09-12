@@ -39,7 +39,7 @@ try {
     users: ["avatar_url"],
     lawyers: ["profile_completed"],
     articles: ["cover_image", "tags", "author_avatar", "author_user_id"],
-    consultations: ["source_question_id", "message_limit"],
+    consultations: ["source_question_id", "message_limit", "urgent", "base_amount", "urgent_surcharge_rate", "urgent_surcharge_amount"],
     services: ["back_description", "case_types"],
   };
   for (const [table, columns] of Object.entries(requiredColumns)) {

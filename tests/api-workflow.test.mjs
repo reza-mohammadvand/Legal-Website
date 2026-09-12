@@ -173,7 +173,7 @@ test("the local API completes the legal consultation workflow securely", {
     assert.ok(bootstrap.services.every((item) => Number.isSafeInteger(item.id) && typeof item.back_description === "string"));
     assert.ok(bootstrap.services.every((item) => Array.isArray(JSON.parse(item.case_types))));
     assert.ok(bootstrap.lawyers.every((item) => typeof item.specialty_ids === "string"));
-    for (const key of ["logo_light_url", "logo_dark_url", "favicon_url", "hero_images"]) assert.ok(Object.hasOwn(bootstrap.settings, key));
+    for (const key of ["logo_light_url", "logo_dark_url", "favicon_url", "hero_images", "urgent_surcharge_percent"]) assert.ok(Object.hasOwn(bootstrap.settings, key));
 
     expectStatus(await api("/api/dashboard"), 401, "Anonymous dashboard request");
     expectStatus(await api("/api/questions", {
@@ -227,6 +227,48 @@ test("the local API completes the legal consultation workflow securely", {
     const lawyerId = lawyerDashboard.profile.id;
     const publicLawyer = bootstrap.lawyers.find((item) => item.id === lawyerId);
     assert.ok(publicLawyer, "The signed-in lawyer must be present in the public directory");
+
+    expectStatus(await api("/api/admin/action", {
+      method: "POST",
+      token: admin.token,
+      body: { action: "setting", key: "urgent_surcharge_percent", value: "101" },
+    }), 400, "Reject an out-of-range urgent surcharge");
+    expectStatus(await api("/api/admin/action", {
+      method: "POST",
+      token: admin.token,
+      body: { action: "setting", key: "urgent_surcharge_percent", value: "25" },
+    }), 200, "Administrator sets the urgent surcharge");
+    const urgentBootstrap = expectStatus(await api("/api/bootstrap"), 200, "Public urgent surcharge setting");
+    assert.equal(urgentBootstrap.settings.urgent_surcharge_percent, "25");
+
+    const urgentText = expectStatus(await api("/api/consultations", {
+      method: "POST",
+      token: client.token,
+      body: {
+        type: "text",
+        topic: "Urgent paid text consultation",
+        lawyerId,
+        urgent: true,
+        amount: 1,
+      },
+    }), 201, "Create an urgent paid consultation");
+    const urgentBase = Number(publicLawyer.text_price || bootstrap.settings.default_text_price);
+    const urgentFee = Math.round(urgentBase * 0.25);
+    assert.equal(urgentText.urgent, true);
+    assert.equal(urgentText.baseAmount, urgentBase);
+    assert.equal(urgentText.urgentSurchargeRate, 25);
+    assert.equal(urgentText.urgentSurchargeAmount, urgentFee);
+    assert.equal(urgentText.amount, urgentBase + urgentFee);
+    assert.notEqual(urgentText.amount, 1, "The server must ignore a client-supplied amount");
+    const afterUrgent = expectStatus(await api("/api/dashboard", { token: client.token }), 200, "Urgent consultation in client dashboard");
+    const urgentConsultation = afterUrgent.consultations.find((item) => item.id === urgentText.id);
+    const urgentOrder = afterUrgent.orders.find((item) => item.consultation_id === urgentText.id);
+    assert.equal(urgentConsultation.urgent, 1);
+    assert.equal(urgentConsultation.base_amount, urgentBase);
+    assert.equal(urgentConsultation.urgent_surcharge_rate, 25);
+    assert.equal(urgentConsultation.urgent_surcharge_amount, urgentFee);
+    assert.equal(urgentOrder.amount, urgentText.amount);
+    assert.equal(urgentOrder.commission_amount, Math.round(urgentText.amount * urgentText.commissionRate / 100));
 
     const questionCreated = expectStatus(await api("/api/questions", {
       method: "POST",

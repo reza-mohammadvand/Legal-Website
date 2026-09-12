@@ -21,9 +21,10 @@ const permissionNames = [
 const adminPermissionNames = new Set(permissionNames);
 const publicSettingNames = new Set([
   "site_name", "support_phone", "support_email", "support_address",
-  "default_phone_price", "default_in_person_price", "questions_enabled",
+  "questions_enabled",
   "global_in_person_enabled", "maintenance_mode",
-  "free_question_limit", "max_question_lawyers", "text_message_limit", "default_text_price",
+  "free_question_limit", "max_question_lawyers", "text_message_limit",
+  "urgent_surcharge_percent",
   "phone_price_min", "phone_price_max", "text_price_min", "text_price_max", "in_person_price_min", "in_person_price_max",
   "footer_config", "terms_content", "privacy_content", "trust_items", "article_tags", "site_views",
   "logo_light_url", "logo_dark_url", "favicon_url", "hero_images",
@@ -536,7 +537,7 @@ const server = createServer(async (req, res) => {
         const result = db.prepare("INSERT INTO users(username,password_hash,role,first_name,last_name,email,phone,province,city,status) VALUES(?,?,?,?,?,?,?,?,?,'active')").run(username, hashPassword(password), role, firstName, lastName, email, phone, province, city);
         db.prepare("UPDATE users SET avatar_url=? WHERE id=?").run(`/avatars/default-${role}.png`, result.lastInsertRowid);
         if (role === "lawyer") {
-          const defaultPhone = Number(db.prepare("SELECT value FROM settings WHERE key='default_phone_price'").get()?.value || 480000);
+          const defaultPhone = settingNumber("phone_price_min", 100000);
           const lawyerResult = db.prepare("INSERT INTO lawyers(user_id,license_number,specialties,bio,phone_price,text_price,verified,in_person_enabled) VALUES(?,?,?,?,?,0,0,0)").run(result.lastInsertRowid, licenseNumber, selectedSpecialties.map((service) => service.title).join("، "), "پروفایل در انتظار تکمیل و تأیید مدیر", defaultPhone);
           replaceLawyerSpecialties(Number(lawyerResult.lastInsertRowid), selectedSpecialties);
         }
@@ -585,7 +586,7 @@ const server = createServer(async (req, res) => {
           : currentSpecialties.length ? currentSpecialties : resolveActiveSpecialties(undefined, lawyer.specialties);
         const bio = validText(value("bio", "bio", lawyer.bio), 10, 4000);
         const phonePrice = Number(value("phonePrice", "phone_price", lawyer.phone_price));
-        const textPrice = Number(value("textPrice", "text_price", lawyer.text_price || settingNumber("default_text_price", 200000)));
+        const textPrice = Number(value("textPrice", "text_price", lawyer.text_price || settingNumber("text_price_min", 50000)));
         const rawInPerson = value("inPersonPrice", "in_person_price", lawyer.in_person_price);
         const inPersonPrice = rawInPerson === null || rawInPerson === "" ? null : Number(rawInPerson);
         if (!licenseNumber || !selectedSpecialties || !bio) return json(res, 400, { error: "اطلاعات پروفایل و حوزه‌های تخصصی معتبر نیست؛ بین ۱ تا ۸ مورد انتخاب کن." });
@@ -793,10 +794,9 @@ const server = createServer(async (req, res) => {
       let lawyer = lawyerId ? db.prepare("SELECT l.* FROM lawyers l JOIN users u ON u.id=l.user_id WHERE l.id=? AND l.verified=1 AND u.status='active'").get(lawyerId) : null;
       if (lawyerId && !lawyer) return json(res, 400, { error: "وکیل انتخاب‌شده معتبر یا تأییدشده نیست" });
       if (type === "text" && !lawyer) {
-        const defaultTextPrice = settingNumber("default_text_price", 200000);
         lawyer = db.prepare("SELECT l.* FROM lawyers l JOIN users u ON u.id=l.user_id WHERE l.verified=1 AND u.status='active' ORDER BY l.rating DESC,l.featured DESC,l.online DESC,l.id")
           .all()
-          .find((candidate) => priceAllowed("text", Number(candidate.text_price || defaultTextPrice)));
+          .find((candidate) => priceAllowed("text", Number(candidate.text_price)));
         if (!lawyer) return json(res, 409, { error: "فعلاً وکیل آماده‌ای برای مشاوره متنی پیدا نشد." });
         lawyerId = lawyer.id;
       }
@@ -805,10 +805,14 @@ const server = createServer(async (req, res) => {
       if (sourceQuestionId && (type !== "text" || !db.prepare("SELECT 1 FROM questions q JOIN answers a ON a.question_id=q.id WHERE q.id=? AND q.client_id=? AND a.lawyer_id=?").get(sourceQuestionId, user.id, lawyerId))) return json(res, 403, { error: "این ادامه مشاوره به پرسش و وکیل انتخابی مرتبط نیست." });
       if (type === "in_person" && (!lawyer.in_person_enabled || !lawyer.in_person_price)) return json(res, 400, { error: "مشاوره حضوری برای این وکیل فعال نیست" });
       let scheduledAt = selectedSlot ? new Date(selectedSlot.starts_at).toISOString() : null;
-      const defaultPrice = settingNumber(`default_${type}_price`, type === "text" ? 200000 : 0);
-      const amount = Number(lawyer ? lawyer[`${type}_price`] || defaultPrice : defaultPrice);
+      const rangeMinimum = settingNumber(`${type}_price_min`, type === "text" ? 50000 : type === "phone" ? 100000 : 200000);
+      const baseAmount = Number(lawyer ? lawyer[`${type}_price`] : rangeMinimum);
+      const urgent = body.urgent === true;
+      const urgentSurchargeRate = urgent ? settingNumber("urgent_surcharge_percent", 20) : 0;
+      const urgentSurchargeAmount = urgent ? Math.round(baseAmount * urgentSurchargeRate / 100) : 0;
+      const amount = baseAmount + urgentSurchargeAmount;
       const commissionRate = Number(db.prepare("SELECT value FROM settings WHERE key='site_commission'").get()?.value || 0);
-      if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 100000000 || !Number.isFinite(commissionRate) || commissionRate < 0 || commissionRate > 100) return json(res, 409, { error: "تعرفه معتبر برای این مشاوره ثبت نشده است" });
+      if (!priceAllowed(type, baseAmount) || !Number.isFinite(urgentSurchargeRate) || urgentSurchargeRate < 0 || urgentSurchargeRate > 100 || !Number.isSafeInteger(urgentSurchargeAmount) || !Number.isSafeInteger(amount) || amount <= 0 || amount > 200000000 || !Number.isFinite(commissionRate) || commissionRate < 0 || commissionRate > 100) return json(res, 409, { error: "تعرفه وکیل خارج از بازه تعیین‌شده مدیر است یا هزینه فوریت معتبر نیست" });
       const commissionAmount = Math.round(amount * commissionRate / 100);
       const trackingCode = `DR-${Date.now().toString(36).toUpperCase()}-${randomBytes(4).toString("hex").toUpperCase()}`;
       const deferPayment = body.deferPayment === true;
@@ -825,7 +829,7 @@ const server = createServer(async (req, res) => {
           const consumed = db.prepare("UPDATE appointment_slots SET status='booked' WHERE id=? AND status='available'").run(slotId);
           if (!consumed.changes) throw new ApiError(409, "زمان انتخاب‌شده دیگر در دسترس نیست");
         }
-        const result = db.prepare("INSERT INTO consultations(client_id,lawyer_id,slot_id,type,topic,description,scheduled_at,amount,payment_status,status,source_question_id,message_limit) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(user.id, lawyerId, slotId, type, topic, description, scheduledAt, amount, paymentStatus, status, sourceQuestionId, settingNumber("text_message_limit", 3));
+        const result = db.prepare("INSERT INTO consultations(client_id,lawyer_id,slot_id,type,topic,description,scheduled_at,urgent,base_amount,urgent_surcharge_rate,urgent_surcharge_amount,amount,payment_status,status,source_question_id,message_limit) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(user.id, lawyerId, slotId, type, topic, description, scheduledAt, urgent ? 1 : 0, baseAmount, urgentSurchargeRate, urgentSurchargeAmount, amount, paymentStatus, status, sourceQuestionId, settingNumber("text_message_limit", 3));
         consultationId = Number(result.lastInsertRowid);
         db.prepare("INSERT INTO orders(client_id,consultation_id,type,amount,commission_rate,commission_amount,status,tracking_code,paid_at) VALUES(?,?,?,?,?,?,?,?,CASE WHEN ?='paid' THEN CURRENT_TIMESTAMP ELSE NULL END)").run(user.id, consultationId, type, amount, commissionRate, commissionAmount, orderStatus, trackingCode, orderStatus);
         if (type === "text" && !deferPayment) ensureConversation(db.prepare("SELECT * FROM consultations WHERE id=?").get(consultationId));
@@ -838,6 +842,10 @@ const server = createServer(async (req, res) => {
         ok: true,
         id: consultationId,
         lawyerId,
+        urgent,
+        baseAmount,
+        urgentSurchargeRate,
+        urgentSurchargeAmount,
         amount,
         commissionRate,
         status,
@@ -1702,9 +1710,9 @@ const server = createServer(async (req, res) => {
           if (!value || value.length > 50000) return json(res, 400, { error: "متن قوانین باید بین ۱ تا ۵۰۰۰۰ نویسه باشه." });
         } else if (key === "site_views") {
           if (!Number.isSafeInteger(Number(value)) || Number(value) < 0) return json(res, 400, { error: "آمار بازدید باید یک عدد مثبت یا صفر باشه." });
-        } else if (key === "site_commission") {
+        } else if (["site_commission", "urgent_surcharge_percent"].includes(key)) {
           const number = Number(value);
-          if (!Number.isFinite(number) || number < 0 || number > 100) return json(res, 400, { error: "درصد کمیسیون باید بین صفر تا صد باشد" });
+          if (!Number.isFinite(number) || number < 0 || number > 100) return json(res, 400, { error: "درصد باید بین صفر تا صد باشد" });
           value = String(number);
         } else if (["questions_enabled", "global_in_person_enabled", "maintenance_mode", "stats_enabled", "trust_enabled"].includes(key)) {
           if (!["0", "1", "true", "false"].includes(value.toLowerCase())) return json(res, 400, { error: "مقدار کلید روشن یا خاموش معتبر نیست" });

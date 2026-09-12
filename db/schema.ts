@@ -141,6 +141,10 @@ export const consultations = sqliteTable(
     topic: text("topic").notNull(),
     description: text("description"),
     scheduledAt: text("scheduled_at"),
+    urgent: integer("urgent").notNull().default(0),
+    baseAmount: integer("base_amount").notNull().default(0),
+    urgentSurchargeRate: real("urgent_surcharge_rate").notNull().default(0),
+    urgentSurchargeAmount: integer("urgent_surcharge_amount").notNull().default(0),
     amount: integer("amount").notNull().default(0),
     paymentStatus: text("payment_status")
       .notNull()
