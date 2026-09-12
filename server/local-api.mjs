@@ -23,6 +23,12 @@ const publicSettingNames = new Set([
   "site_name", "support_phone", "support_email", "support_address",
   "default_phone_price", "default_in_person_price", "questions_enabled",
   "global_in_person_enabled", "maintenance_mode",
+  "free_question_limit", "max_question_lawyers", "text_message_limit", "default_text_price",
+  "phone_price_min", "phone_price_max", "text_price_min", "text_price_max", "in_person_price_min", "in_person_price_max",
+  "footer_config", "terms_content", "privacy_content", "trust_items", "article_tags", "site_views",
+  "logo_light_url", "logo_dark_url", "favicon_url", "hero_images",
+  "stats_enabled", "stats_title", "stat_labels", "trust_enabled",
+  "stats_views_label", "stats_consultations_label", "stats_reviews_label", "stats_lawyers_label",
 ]);
 
 class ApiError extends Error {
@@ -73,6 +79,15 @@ const validText = (value, min, max) => {
   const text = cleanText(value);
   return text.length >= min && text.length <= max ? text : null;
 };
+const validTextList = (value, maxItems = 12, maxLength = 120) => {
+  let items = value;
+  if (typeof items === "string") {
+    try { items = JSON.parse(items); } catch { items = items.split(/\r?\n/); }
+  }
+  if (!Array.isArray(items) || items.length > maxItems) return null;
+  const cleaned = [...new Set(items.map((item) => cleanText(item)).filter(Boolean))];
+  return cleaned.some((item) => item.length < 2 || item.length > maxLength) ? null : cleaned;
+};
 const validId = (value) => {
   const id = Number(value);
   return Number.isSafeInteger(id) && id > 0 ? id : null;
@@ -85,8 +100,54 @@ const validIsoFuture = (value, optional = false) => {
   if (!Number.isFinite(time) || time <= Date.now()) return undefined;
   return new Date(time).toISOString();
 };
-const accountFor = (userId) => db.prepare("SELECT id,username,role,first_name,last_name,email,phone,province,city,status,created_at FROM users WHERE id=?").get(userId);
+const accountFor = (userId) => db.prepare("SELECT id,username,role,first_name,last_name,email,phone,province,city,status,avatar_url,created_at FROM users WHERE id=?").get(userId);
 const lawyerForUser = (userId) => db.prepare("SELECT * FROM lawyers WHERE user_id=?").get(userId);
+const specialtyRowsForLawyer = (lawyerId) => db.prepare(`SELECT s.id,s.title,s.active,s.sort_order
+  FROM lawyer_specialties ls JOIN services s ON s.id=ls.service_id
+  WHERE ls.lawyer_id=? ORDER BY s.sort_order,s.id`).all(lawyerId);
+const specialtyIdsForLawyer = (lawyerId) => specialtyRowsForLawyer(lawyerId).map((service) => service.id);
+const resolveActiveSpecialties = (rawIds, legacyValue = "", allowedInactiveIds = []) => {
+  let ids = [];
+  if (Array.isArray(rawIds)) {
+    if (rawIds.length < 1 || rawIds.length > 8) return null;
+    const parsedIds = rawIds.map(validId);
+    if (parsedIds.some((id) => !id)) return null;
+    ids = [...new Set(parsedIds)];
+    if (ids.length !== rawIds.length) return null;
+  } else {
+    const titles = [...new Set(cleanText(legacyValue).split(/[،,|]/).map((title) => title.trim()).filter(Boolean))];
+    if (titles.length < 1 || titles.length > 8) return null;
+    const activeServices = db.prepare("SELECT id,title FROM services WHERE active=1").all();
+    const byTitle = new Map(activeServices.map((service) => [service.title, service.id]));
+    if (titles.some((title) => !byTitle.has(title))) return null;
+    ids = titles.map((title) => byTitle.get(title));
+  }
+  const placeholders = ids.map(() => "?").join(",");
+  const services = db.prepare(`SELECT id,title,active,sort_order FROM services WHERE id IN (${placeholders}) ORDER BY sort_order,id`).all(...ids);
+  const allowedInactive = new Set(allowedInactiveIds);
+  return services.length === ids.length && services.every((service) => service.active || allowedInactive.has(service.id)) ? services : null;
+};
+const refreshLawyerSpecialtyCache = (lawyerId) => {
+  const labels = specialtyRowsForLawyer(lawyerId).map((service) => service.title).join("، ");
+  db.prepare("UPDATE lawyers SET specialties=? WHERE id=?").run(labels || "در انتظار انتخاب تخصص", lawyerId);
+  return labels;
+};
+const replaceLawyerSpecialties = (lawyerId, services) => {
+  db.prepare("DELETE FROM lawyer_specialties WHERE lawyer_id=?").run(lawyerId);
+  const insert = db.prepare("INSERT INTO lawyer_specialties(lawyer_id,service_id) VALUES(?,?)");
+  for (const service of services) insert.run(lawyerId, service.id);
+  return refreshLawyerSpecialtyCache(lawyerId);
+};
+const settingNumber = (key, fallback) => Number(db.prepare("SELECT value FROM settings WHERE key=?").get(key)?.value ?? fallback);
+const answerLimit = () => settingNumber("max_question_lawyers", 3);
+const settingsPayload = () => Object.fromEntries(db.prepare("SELECT key,value FROM settings").all().filter((row) => publicSettingNames.has(row.key)).map((row) => [row.key, row.value]));
+const jsonSetting = (key, fallback) => { try { return JSON.parse(db.prepare("SELECT value FROM settings WHERE key=?").get(key)?.value ?? "null") ?? fallback; } catch { return fallback; } };
+const priceAllowed = (type, amount) => Number.isSafeInteger(amount) && amount >= settingNumber(`${type}_price_min`, 1) && amount <= settingNumber(`${type}_price_max`, 100000000);
+const isStoredSiteMediaUrl = (value) => {
+  const match = /^\/api\/media\/([1-9]\d*)$/.exec(cleanText(value));
+  const mediaId = match ? validId(match[1]) : null;
+  return Boolean(mediaId && db.prepare("SELECT 1 FROM documents WHERE id=? AND kind='site_media' AND status='approved'").get(mediaId));
+};
 
 const primaryAdminId = () => Number(db.prepare("SELECT value FROM settings WHERE key='primary_admin_id'").get()?.value || 0);
 const isPrimaryAdmin = (user) => user?.role === "admin" && user.id === primaryAdminId();
@@ -185,24 +246,31 @@ const publicDocument = (row) => row && ({
   download_url: `/api/documents/${row.id}/download`,
 });
 
-const documentsForOwner = (ownerId) => db.prepare("SELECT id,owner_id,lawyer_id,question_id,consultation_id,kind,file_name,mime_type,size_bytes,status,created_at FROM documents WHERE owner_id=? ORDER BY created_at DESC").all(ownerId).map(publicDocument);
+const documentsForOwner = (ownerId) => db.prepare("SELECT id,owner_id,lawyer_id,question_id,consultation_id,kind,file_name,mime_type,size_bytes,status,created_at FROM documents WHERE owner_id=? AND consultation_id IS NULL AND question_id IS NULL ORDER BY created_at DESC").all(ownerId).map(publicDocument);
 const documentsForLawyer = (lawyer) => db.prepare(`
   SELECT DISTINCT d.id,d.owner_id,d.lawyer_id,d.question_id,d.consultation_id,d.kind,d.file_name,d.mime_type,d.size_bytes,d.status,d.created_at
   FROM documents d
-  WHERE d.owner_id=? OR (d.question_id IS NULL AND d.consultation_id IS NULL AND d.lawyer_id=?)
-    OR EXISTS(SELECT 1 FROM consultations c WHERE c.id=d.consultation_id AND c.lawyer_id=?)
-    OR EXISTS(SELECT 1 FROM question_assignments qa WHERE qa.question_id=d.question_id AND qa.lawyer_id=? AND qa.status IN ('assigned','answered'))
+  WHERE d.consultation_id IS NULL AND d.question_id IS NULL AND (d.owner_id=? OR d.lawyer_id=?)
   ORDER BY d.created_at DESC
-`).all(lawyer.user_id, lawyer.id, lawyer.id, lawyer.id).map(publicDocument);
+`).all(lawyer.user_id, lawyer.id).map(publicDocument);
+const documentsForQuestion = (questionId) => db.prepare("SELECT id,owner_id,lawyer_id,question_id,consultation_id,kind,file_name,mime_type,size_bytes,status,created_at FROM documents WHERE question_id=? ORDER BY created_at").all(questionId).map(publicDocument);
+const documentsForConsultation = (consultationId, viewer) => db.prepare("SELECT id,owner_id,lawyer_id,question_id,consultation_id,kind,file_name,mime_type,size_bytes,status,created_at FROM documents WHERE consultation_id=? ORDER BY created_at,id")
+  .all(consultationId)
+  .filter((document) => mayAccessDocument(viewer, document))
+  .map(publicDocument);
 
 const mayAccessDocument = (user, document) => {
   if (!user || !document) return false;
   if (document.owner_id === user.id) return true;
   if (user.role === "admin") return hasAdminPermission(user, "documents.manage");
+  if (document.consultation_id) {
+    if (user.role === "client") return Boolean(db.prepare("SELECT 1 FROM consultations WHERE id=? AND client_id=?").get(document.consultation_id, user.id));
+    const lawyer = user.role === "lawyer" ? lawyerForUser(user.id) : null;
+    return Boolean(lawyer && db.prepare("SELECT 1 FROM consultations WHERE id=? AND lawyer_id=?").get(document.consultation_id, lawyer.id));
+  }
   if (user.role !== "lawyer") return false;
   const lawyer = lawyerForUser(user.id);
   if (!lawyer) return false;
-  if (document.consultation_id) return Boolean(db.prepare("SELECT 1 FROM consultations WHERE id=? AND lawyer_id=?").get(document.consultation_id, lawyer.id));
   if (document.question_id) return Boolean(db.prepare("SELECT 1 FROM question_assignments WHERE question_id=? AND lawyer_id=? AND status IN ('assigned','answered')").get(document.question_id, lawyer.id));
   return document.lawyer_id === lawyer.id;
 };
@@ -215,7 +283,7 @@ const safeDiskPath = (storedPath) => {
 };
 
 const ensureConversation = (consultation) => {
-  if (!consultation?.lawyer_id) return null;
+  if (!consultation?.lawyer_id || consultation.type !== "text") return null;
   db.prepare("INSERT OR IGNORE INTO conversations(consultation_id,client_id,lawyer_id,status) VALUES(?,?,?,?)").run(
     consultation.id,
     consultation.client_id,
@@ -225,12 +293,51 @@ const ensureConversation = (consultation) => {
   return db.prepare("SELECT * FROM conversations WHERE consultation_id=?").get(consultation.id);
 };
 
+const conversationTurnUsage = (conversationId, clientId, lawyerUserId) => {
+  const senders = db.prepare("SELECT sender_id FROM chat_messages WHERE conversation_id=? ORDER BY created_at,id").all(conversationId);
+  const turns = { client: 0, lawyer: 0 };
+  let lastSenderId = null;
+  for (const { sender_id: senderId } of senders) {
+    if (senderId === lastSenderId) continue;
+    if (senderId === clientId) turns.client += 1;
+    if (senderId === lawyerUserId) turns.lawyer += 1;
+    lastSenderId = senderId;
+  }
+  return { ...turns, lastSenderId };
+};
+
 const conversationPayloads = (role, id) => {
-  const rows = role === "client"
-    ? db.prepare("SELECT cv.*,c.topic,c.type consultation_type,c.status consultation_status,u.first_name||' '||u.last_name lawyer_name FROM conversations cv JOIN consultations c ON c.id=cv.consultation_id JOIN lawyers l ON l.id=cv.lawyer_id JOIN users u ON u.id=l.user_id WHERE cv.client_id=? ORDER BY cv.created_at DESC").all(id)
-    : db.prepare("SELECT cv.*,c.topic,c.type consultation_type,c.status consultation_status,u.first_name||' '||u.last_name client_name FROM conversations cv JOIN consultations c ON c.id=cv.consultation_id JOIN users u ON u.id=cv.client_id WHERE cv.lawyer_id=? ORDER BY cv.created_at DESC").all(id);
-  const messages = db.prepare("SELECT cm.id,cm.conversation_id,cm.sender_id,cm.body,cm.created_at,u.first_name||' '||u.last_name sender_name,u.role sender_role FROM chat_messages cm JOIN users u ON u.id=cm.sender_id WHERE cm.conversation_id=? ORDER BY cm.created_at");
-  return rows.map((row) => ({ ...row, messages: messages.all(row.id) }));
+  const rows = db.prepare(`SELECT cv.*,c.topic,c.message_limit,c.source_question_id,c.type consultation_type,c.status consultation_status,
+    c.scheduled_at,c.amount,c.payment_status,o.tracking_code,
+    lu.first_name||' '||lu.last_name lawyer_name,cu.first_name||' '||cu.last_name client_name,
+    COALESCE(lu.avatar_url,'/avatars/default-lawyer.png') lawyer_avatar_url,
+    COALESCE(cu.avatar_url,'/avatars/default-client.png') client_avatar_url
+    FROM conversations cv JOIN consultations c ON c.id=cv.consultation_id
+    JOIN lawyers l ON l.id=cv.lawyer_id JOIN users lu ON lu.id=l.user_id JOIN users cu ON cu.id=cv.client_id
+    LEFT JOIN orders o ON o.consultation_id=c.id
+    WHERE ${role === "client" ? "cv.client_id" : "cv.lawyer_id"}=? AND c.type='text' ORDER BY cv.created_at DESC`).all(id);
+  const messages = db.prepare("SELECT cm.id,cm.conversation_id,cm.sender_id,cm.body,cm.created_at,u.first_name||' '||u.last_name sender_name,u.role sender_role,COALESCE(u.avatar_url,'/avatars/default-'||u.role||'.png') sender_avatar_url FROM chat_messages cm JOIN users u ON u.id=cm.sender_id WHERE cm.conversation_id=? ORDER BY cm.created_at,cm.id");
+  const attachments = db.prepare("SELECT d.*,u.first_name||' '||u.last_name owner_name FROM documents d JOIN users u ON u.id=d.owner_id WHERE d.consultation_id=? OR d.question_id=? ORDER BY d.created_at,d.id");
+  const viewer = accountFor(role === "client" ? id : db.prepare("SELECT user_id FROM lawyers WHERE id=?").get(id)?.user_id);
+  return rows.map((row) => {
+    const limit = row.message_limit || settingNumber("text_message_limit", 3);
+    const lawyerUserId = db.prepare("SELECT user_id FROM lawyers WHERE id=?").get(row.lawyer_id)?.user_id;
+    const usage = conversationTurnUsage(row.id, row.client_id, lawyerUserId);
+    return {
+      ...row,
+      consultation: { id: row.consultation_id, lawyer_id: row.lawyer_id, type: row.consultation_type, topic: row.topic, status: row.consultation_status, source_question_id: row.source_question_id, scheduled_at: row.scheduled_at, amount: row.amount, payment_status: row.payment_status, message_limit: row.message_limit, tracking_code: row.tracking_code },
+      messages: messages.all(row.id),
+      attachments: attachments.all(row.consultation_id, row.source_question_id).filter((document) => mayAccessDocument(viewer, document)).map(publicDocument),
+      turn_limit: limit,
+      turn_usage: { client: usage.client, lawyer: usage.lawyer },
+      turns_remaining: { client: Math.max(0, limit - usage.client), lawyer: Math.max(0, limit - usage.lawyer) },
+      quota_complete: usage.client >= limit && usage.lawyer >= limit,
+      can_send: {
+        client: row.status === "open" && (usage.lastSenderId === row.client_id || usage.client < limit),
+        lawyer: row.status === "open" && (usage.lastSenderId === lawyerUserId || usage.lawyer < limit),
+      },
+    };
+  });
 };
 
 const recomputeLawyerRating = (lawyerId) => {
@@ -287,10 +394,44 @@ const publicCheckoutDetails = (checkout) => ({
   consultation: checkout.consultation,
 });
 
+const notificationPayload = (user, data) => {
+  const seen = new Set(jsonSetting(`notification_seen_${user.id}`, []));
+  const items = [];
+  const add = (id, section, title, createdAt) => { if (!seen.has(id)) items.push({ id, section, title, created_at: createdAt || new Date().toISOString() }); };
+  for (const question of data.questions || []) {
+    if (user.role === "client") {
+      if (question.status === "cancelled") add(`question-cancelled-${question.id}`, "questions", `پرسشت درباره ${question.topic} توسط مدیر لغو شد.`, question.created_at);
+      for (const answer of question.answers || []) add(`answer-${answer.id}`, "questions", `به پرسشت درباره ${question.topic} پاسخ دادن.`, answer.created_at);
+    } else if (user.role === "lawyer" && question.status === "cancelled") add(`question-cancelled-${question.id}`, "questions", `پرسش ${question.topic} لغو شد و دیگه نیاز نیست پاسخی براش بفرستی.`, question.created_at);
+    else if (user.role === "lawyer" && question.assignment_status === "assigned") add(`question-${question.id}`, "questions", `یک پرسش تازه درباره ${question.topic} داری.`, question.created_at);
+    else if (user.role === "admin" && question.status === "pending_assignment") add(`question-${question.id}`, "questions", "یک پرسش منتظر ارجاعه.", question.created_at);
+  }
+  for (const item of data.consultations || []) {
+    if (item.status === "cancelled" || item.status === "rejected") continue;
+    const title = item.status === "pending_coordination" ? "پشتیبانی برای هماهنگی زمان مشاوره باهات تماس می‌گیره." : item.scheduled_at ? `زمان مشاوره‌ات هماهنگ شد: ${item.scheduled_at}` : `وضعیت مشاوره ${item.topic} به‌روز شد.`;
+    add(`consultation-${item.id}-${item.status}-${item.scheduled_at || ""}`, "consultations", title, item.created_at);
+  }
+  for (const conversation of data.conversations || []) for (const message of conversation.messages || []) if (message.sender_id !== user.id) add(`chat-${message.id}`, "chat", "توی گفت‌وگوت یک پیام تازه داری.", message.created_at);
+  for (const message of data.messages || []) if (user.role === "admin" ? message.status === "new" : Boolean(message.admin_reply)) add(`support-${message.id}-${message.status}`, "messages", user.role === "admin" ? "یک پیام پشتیبانی تازه داری." : "پشتیبانی به پیامت پاسخ داده.", message.updated_at || message.created_at);
+  for (const review of data.reviews || []) if (user.role !== "client") add(`review-${review.id}-${review.status}`, "reviews", "یک نظر تازه ثبت شده.", review.created_at);
+  if (user.role === "lawyer" && !data.profile?.verified) add(`profile-${data.profile?.profile_completed ? "documents" : "incomplete"}`, "profile", "برای تأیید حسابت، پروفایلت رو کامل کن و مدارک هویتی و پروانه‌ات رو بفرست.");
+  for (const lawyer of data.lawyers || []) if (!lawyer.verified) add(`lawyer-${lawyer.id}`, "lawyers", "یک وکیل منتظر بررسی پروفایله.", lawyer.created_at);
+  for (const article of data.articles || []) if (user.role === "admin" ? article.status === "pending_review" : article.status === "published") add(`article-${article.id}-${article.status}`, "articles", user.role === "admin" ? "یک مقاله منتظر تأییدته." : "مقاله‌ات منتشر شد.", article.created_at);
+  for (const document of data.documents || []) if (!["avatar", "article_cover", "site_media"].includes(document.kind)) add(`document-${document.id}-${document.status}`, "documents", document.status === "pending" ? "یک مدرک منتظر بررسیه." : "مدرک پرونده‌ات آماده است.", document.created_at);
+  for (const account of data.users || []) add(`user-${account.id}`, "users", "یک کاربر تازه به سایت اضافه شده.", account.created_at);
+  const notificationItems = items.slice(0, 200);
+  const notificationCounts = {};
+  for (const item of notificationItems) notificationCounts[item.section] = (notificationCounts[item.section] || 0) + 1;
+  return { notificationItems, notificationCounts };
+};
+
 const publicBootstrap = () => {
   const lawyers = db.prepare(`
-    SELECT l.id,l.license_number,l.specialties,l.bio,l.phone_price,l.text_price,l.in_person_price,l.rating,l.verified,l.featured,l.online,l.in_person_enabled,
-      u.first_name||' '||u.last_name name,u.city,u.province,u.created_at joined_at,u.created_at created_at,
+    SELECT l.id,l.license_number,
+      COALESCE((SELECT group_concat(s.title,'، ') FROM lawyer_specialties ls JOIN services s ON s.id=ls.service_id WHERE ls.lawyer_id=l.id AND s.active=1),'') specialties,
+      COALESCE((SELECT group_concat(s.id,',') FROM lawyer_specialties ls JOIN services s ON s.id=ls.service_id WHERE ls.lawyer_id=l.id AND s.active=1),'') specialty_ids,
+      l.bio,l.phone_price,l.text_price,l.in_person_price,l.rating,l.verified,l.featured,l.online,l.in_person_enabled,
+      u.first_name||' '||u.last_name name,u.avatar_url,u.city,u.province,u.created_at joined_at,u.created_at created_at,
       CASE WHEN l.online=1 THEN 'کمتر از ۱ ساعت' ELSE 'حداکثر ۴ ساعت' END response_time,
       (SELECT COUNT(*) FROM consultations c WHERE c.lawyer_id=l.id AND c.status='completed') consultations_count,
       (SELECT COUNT(*) FROM answers a WHERE a.lawyer_id=l.id) answers_count,
@@ -299,29 +440,36 @@ const publicBootstrap = () => {
     WHERE l.verified=1 AND u.status='active'
     ORDER BY l.featured DESC,l.rating DESC
   `).all();
-  const slots = db.prepare("SELECT id,lawyer_id,starts_at,ends_at,consultation_type,status FROM appointment_slots WHERE status='available' AND datetime(starts_at)>datetime('now') ORDER BY starts_at").all();
+  const slots = db.prepare("SELECT id,lawyer_id,starts_at,ends_at,consultation_type,status FROM appointment_slots WHERE consultation_type='in_person' AND status='available' AND datetime(starts_at)>datetime('now') ORDER BY starts_at").all();
   const publicLawyers = lawyers.map((lawyer) => ({ ...lawyer, available_slots: slots.filter((slot) => slot.lawyer_id === lawyer.id) }));
   const questionRows = db.prepare(`
     SELECT q.id,q.topic,q.body,q.kind,q.status,q.urgent,q.created_at
     FROM questions q
-    WHERE q.publish_allowed=1 AND EXISTS(SELECT 1 FROM answers a WHERE a.question_id=q.id AND a.published=1)
+    WHERE q.publish_allowed=1 AND q.status<>'cancelled' AND EXISTS(SELECT 1 FROM answers a WHERE a.question_id=q.id AND a.published=1)
     ORDER BY q.created_at DESC LIMIT 20
   `).all();
   const publicAnswers = db.prepare("SELECT a.id,a.question_id,a.lawyer_id,a.body,a.created_at,u.first_name||' '||u.last_name lawyer_name FROM answers a JOIN lawyers l ON l.id=a.lawyer_id JOIN users u ON u.id=l.user_id WHERE a.question_id=? AND a.published=1 ORDER BY a.created_at");
   const questions = questionRows.map((question) => {
-    const answers = publicAnswers.all(question.id);
+    const answers = publicAnswers.all(question.id).slice(0, answerLimit());
     return { ...question, answers, answer: answers[0]?.body ?? null, lawyer_name: answers[0]?.lawyer_name ?? null };
   });
   const settingPlaceholders = [...publicSettingNames].map(() => "?").join(",");
   const settings = Object.fromEntries(db.prepare(`SELECT key,value FROM settings WHERE key IN (${settingPlaceholders})`).all(...publicSettingNames).map((item) => [item.key, item.value]));
   return {
     lawyers: publicLawyers,
-    articles: db.prepare("SELECT id,slug,title,excerpt,body,category,author,published_at,created_at FROM articles WHERE status='published' ORDER BY published_at DESC").all(),
+    articles: db.prepare("SELECT id,slug,title,excerpt,body,category,author,cover_image,tags,author_avatar,published_at,created_at FROM articles WHERE status='published' ORDER BY published_at DESC").all(),
     questions,
-    services: db.prepare("SELECT id,title,description,icon,sort_order FROM services WHERE active=1 ORDER BY sort_order,id").all(),
+    services: db.prepare(`SELECT s.id,s.title,s.description,s.back_description,s.case_types,s.icon,s.sort_order,
+      COUNT(CASE WHEN l.verified=1 AND u.status='active' THEN 1 END) lawyer_count
+      FROM services s
+      LEFT JOIN lawyer_specialties ls ON ls.service_id=s.id
+      LEFT JOIN lawyers l ON l.id=ls.lawyer_id
+      LEFT JOIN users u ON u.id=l.user_id
+      WHERE s.active=1 GROUP BY s.id ORDER BY s.sort_order,s.id`).all(),
     faqs: db.prepare("SELECT id,category,question,answer,sort_order FROM faqs WHERE active=1 ORDER BY sort_order,id").all(),
     reviews: db.prepare("SELECT r.id,r.lawyer_id,r.consultation_type,r.body,r.rating,r.created_at,u.first_name||' '||substr(u.last_name,1,1)||'.' client_name,lu.first_name||' '||lu.last_name lawyer_name FROM reviews r JOIN users u ON u.id=r.client_id JOIN lawyers l ON l.id=r.lawyer_id JOIN users lu ON lu.id=l.user_id WHERE r.status='approved' ORDER BY r.created_at DESC LIMIT 20").all(),
     settings,
+    stats: { views: settingNumber("site_views", 0), consultations: db.prepare("SELECT COUNT(*) count FROM consultations WHERE payment_status IN ('simulated_paid','paid')").get().count, reviews: db.prepare("SELECT COUNT(*) count FROM reviews WHERE status='approved'").get().count, rating: db.prepare("SELECT ROUND(AVG(rating),1) rating FROM reviews WHERE status='approved'").get().rating ?? 0, lawyers: publicLawyers.length },
   };
 };
 
@@ -331,13 +479,25 @@ const server = createServer(async (req, res) => {
   try {
     if (req.method === "GET" && url.pathname === "/api/health") return json(res, 200, { ok: true, database: dbPath });
     if (req.method === "GET" && url.pathname === "/api/bootstrap") return json(res, 200, publicBootstrap());
+    if (req.method === "POST" && url.pathname === "/api/visit") {
+      db.prepare("INSERT INTO settings(key,value) VALUES('site_views','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1").run();
+      return json(res, 200, { ok: true });
+    }
+    if (req.method === "POST" && url.pathname === "/api/auth/forgot-password") {
+      const body = await readBody(req);
+      if (!/^09\d{9}$/.test(cleanText(body.phone))) return json(res, 400, { error: "شماره موبایلت رو با ۰۹ و ۱۱ رقم بنویس." });
+      return json(res, 200, { ok: true, smsEnabled: false, message: "اگه با این شماره حساب داشته باشی، بعد از فعال شدن سرویس پیامک می‌تونی رمزت رو بازیابی کنی. فعلاً با پشتیبانی تماس بگیر." });
+    }
 
     if (req.method === "POST" && url.pathname === "/api/auth/login") {
       const body = await readBody(req);
       const username = normalizeUsername(body.username);
       const password = String(body.password ?? "");
+      const expectedRole = cleanText(body.expectedRole);
+      if (expectedRole && !["client", "lawyer", "admin"].includes(expectedRole)) return json(res, 400, { error: "نوع حسابت رو درست انتخاب کن." });
       const user = username.length <= 80 ? db.prepare("SELECT * FROM users WHERE username=? AND status='active'").get(username) : null;
       if (!user || !verifyPassword(password, user.password_hash)) return json(res, 401, { error: "نام کاربری یا رمز عبور نادرست است" });
+      if (expectedRole && user.role !== expectedRole) return json(res, 403, { error: "این حساب با نوع ورودی که انتخاب کردی فرق داره. نوع حسابت رو درست انتخاب کن." });
       db.prepare("DELETE FROM sessions WHERE datetime(expires_at)<=datetime('now')").run();
       const token = randomBytes(32).toString("hex");
       const expiresAt = new Date(Date.now() + 7 * 86400000).toISOString();
@@ -364,19 +524,21 @@ const server = createServer(async (req, res) => {
       if (password.length < 8 || password.length > 128) return json(res, 400, { error: "رمز عبور باید بین ۸ تا ۱۲۸ نویسه باشد" });
       if (!firstName || !lastName) return json(res, 400, { error: "نام و نام خانوادگی معتبر لازم است" });
       if (email.length > 160 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json(res, 400, { error: "ایمیل معتبر نیست" });
-      if (!/^[+\d\s()-]{7,24}$/.test(phone)) return json(res, 400, { error: "شماره تماس معتبر نیست" });
+      if (!/^09\d{9}$/.test(phone)) return json(res, 400, { error: "شماره موبایلت رو با ۰۹ و ۱۱ رقم بنویس." });
       const province = validText(body.province, 0, 80) ?? "";
       const city = validText(body.city, 0, 80) ?? "";
       const licenseNumber = role === "lawyer" ? validText(body.licenseNumber, 2, 80) : null;
-      const specialty = role === "lawyer" ? validText(body.specialty, 2, 300) : null;
-      if (role === "lawyer" && (!licenseNumber || !specialty)) return json(res, 400, { error: "تخصص و شماره پروانه برای ثبت‌نام وکیل لازم است" });
+      const selectedSpecialties = role === "lawyer" ? resolveActiveSpecialties(body.specialtyIds, body.specialty ?? body.specialties) : null;
+      if (role === "lawyer" && (!licenseNumber || !selectedSpecialties)) return json(res, 400, { error: "شماره پروانه و حداقل یک حوزه تخصصی تعریف‌شده توسط مدیر لازمه؛ حداکثر ۸ مورد انتخاب کن." });
       if (db.prepare("SELECT 1 FROM users WHERE username=? OR lower(email)=lower(?)").get(username, email)) return json(res, 409, { error: "نام کاربری یا ایمیل قبلاً ثبت شده است" });
       db.exec("BEGIN IMMEDIATE");
       try {
         const result = db.prepare("INSERT INTO users(username,password_hash,role,first_name,last_name,email,phone,province,city,status) VALUES(?,?,?,?,?,?,?,?,?,'active')").run(username, hashPassword(password), role, firstName, lastName, email, phone, province, city);
+        db.prepare("UPDATE users SET avatar_url=? WHERE id=?").run(`/avatars/default-${role}.png`, result.lastInsertRowid);
         if (role === "lawyer") {
           const defaultPhone = Number(db.prepare("SELECT value FROM settings WHERE key='default_phone_price'").get()?.value || 480000);
-          db.prepare("INSERT INTO lawyers(user_id,license_number,specialties,bio,phone_price,text_price,verified,in_person_enabled) VALUES(?,?,?,?,?,0,0,0)").run(result.lastInsertRowid, licenseNumber, specialty, "پروفایل در انتظار تکمیل و تأیید مدیر", defaultPhone);
+          const lawyerResult = db.prepare("INSERT INTO lawyers(user_id,license_number,specialties,bio,phone_price,text_price,verified,in_person_enabled) VALUES(?,?,?,?,?,0,0,0)").run(result.lastInsertRowid, licenseNumber, selectedSpecialties.map((service) => service.title).join("، "), "پروفایل در انتظار تکمیل و تأیید مدیر", defaultPhone);
+          replaceLawyerSpecialties(Number(lawyerResult.lastInsertRowid), selectedSpecialties);
         }
         db.exec("COMMIT");
         return json(res, 201, { ok: true, requiresVerification: role === "lawyer" });
@@ -416,23 +578,33 @@ const server = createServer(async (req, res) => {
         lawyer = lawyerForUser(user.id);
         if (!lawyer) return json(res, 404, { error: "پروفایل وکیل پیدا نشد" });
         const licenseNumber = validText(value("licenseNumber", "license_number", lawyer.license_number), 2, 80);
-        const specialties = validText(value("specialties", "specialties", value("specialty", "specialty", lawyer.specialties)), 2, 300);
+        const currentSpecialties = specialtyRowsForLawyer(lawyer.id);
+        const specialtySelectionProvided = Object.hasOwn(body, "specialtyIds") || Object.hasOwn(body, "specialties") || Object.hasOwn(body, "specialty");
+        const selectedSpecialties = specialtySelectionProvided
+          ? resolveActiveSpecialties(body.specialtyIds, body.specialties ?? body.specialty, currentSpecialties.filter((service) => !service.active).map((service) => service.id))
+          : currentSpecialties.length ? currentSpecialties : resolveActiveSpecialties(undefined, lawyer.specialties);
         const bio = validText(value("bio", "bio", lawyer.bio), 10, 4000);
         const phonePrice = Number(value("phonePrice", "phone_price", lawyer.phone_price));
+        const textPrice = Number(value("textPrice", "text_price", lawyer.text_price || settingNumber("default_text_price", 200000)));
         const rawInPerson = value("inPersonPrice", "in_person_price", lawyer.in_person_price);
         const inPersonPrice = rawInPerson === null || rawInPerson === "" ? null : Number(rawInPerson);
-        if (!licenseNumber || !specialties || !bio) return json(res, 400, { error: "اطلاعات تخصصی پروفایل کامل یا معتبر نیست" });
+        if (!licenseNumber || !selectedSpecialties || !bio) return json(res, 400, { error: "اطلاعات پروفایل و حوزه‌های تخصصی معتبر نیست؛ بین ۱ تا ۸ مورد انتخاب کن." });
         if (!Number.isSafeInteger(phonePrice) || phonePrice <= 0 || phonePrice > 100000000) return json(res, 400, { error: "تعرفه تلفنی معتبر نیست" });
         if (inPersonPrice !== null && (!Number.isSafeInteger(inPersonPrice) || inPersonPrice <= 0 || inPersonPrice > 100000000)) return json(res, 400, { error: "تعرفه حضوری معتبر نیست" });
-        lawyerUpdate = { licenseNumber, specialties, bio, phonePrice, inPersonPrice, licenseChanged: licenseNumber !== lawyer.license_number };
+        if (!priceAllowed("phone", phonePrice) || !priceAllowed("text", textPrice) || inPersonPrice !== null && !priceAllowed("in_person", inPersonPrice)) return json(res, 400, { error: "نرخی که گذاشتی باید داخل بازه تعیین‌شده مدیر باشه." });
+        const currentIds = currentSpecialties.map((service) => service.id).sort((a, b) => a - b).join(",");
+        const nextIds = selectedSpecialties.map((service) => service.id).sort((a, b) => a - b).join(",");
+        const verificationChanged = licenseNumber !== lawyer.license_number || currentIds !== nextIds;
+        lawyerUpdate = { licenseNumber, specialties: selectedSpecialties.map((service) => service.title).join("، "), selectedSpecialties, bio, phonePrice, textPrice, inPersonPrice, verificationChanged };
       }
       db.exec("BEGIN IMMEDIATE");
       try {
         db.prepare("UPDATE users SET first_name=?,last_name=?,email=?,phone=?,province=?,city=? WHERE id=?").run(firstName, lastName, email, phone, province, city, user.id);
         if (lawyerUpdate) {
-          db.prepare(`UPDATE lawyers SET license_number=?,specialties=?,bio=?,phone_price=?,text_price=0,in_person_price=?,
+          db.prepare(`UPDATE lawyers SET license_number=?,specialties=?,bio=?,phone_price=?,text_price=?,in_person_price=?,profile_completed=1,
             verified=CASE WHEN ? THEN 0 ELSE verified END,online=CASE WHEN ? THEN 0 ELSE online END,in_person_enabled=CASE WHEN ? THEN 0 ELSE in_person_enabled END
-            WHERE user_id=?`).run(lawyerUpdate.licenseNumber, lawyerUpdate.specialties, lawyerUpdate.bio, lawyerUpdate.phonePrice, lawyerUpdate.inPersonPrice, lawyerUpdate.licenseChanged ? 1 : 0, lawyerUpdate.licenseChanged ? 1 : 0, lawyerUpdate.licenseChanged ? 1 : 0, user.id);
+            WHERE user_id=?`).run(lawyerUpdate.licenseNumber, lawyerUpdate.specialties, lawyerUpdate.bio, lawyerUpdate.phonePrice, lawyerUpdate.textPrice, lawyerUpdate.inPersonPrice, lawyerUpdate.verificationChanged ? 1 : 0, lawyerUpdate.verificationChanged ? 1 : 0, lawyerUpdate.verificationChanged ? 1 : 0, user.id);
+          replaceLawyerSpecialties(lawyer.id, lawyerUpdate.selectedSpecialties);
         }
         db.exec("COMMIT");
       } catch (error) {
@@ -442,7 +614,61 @@ const server = createServer(async (req, res) => {
       }
       const account = accountFor(user.id);
       const profile = user.role === "lawyer" ? db.prepare("SELECT l.*,u.first_name,u.last_name,u.email,u.phone,u.province,u.city FROM lawyers l JOIN users u ON u.id=l.user_id WHERE l.user_id=?").get(user.id) : account;
-      return json(res, 200, { ok: true, account, profile, verificationReset: Boolean(lawyerUpdate?.licenseChanged) });
+      if (user.role === "lawyer") profile.specialty_ids = specialtyIdsForLawyer(profile.id);
+      return json(res, 200, { ok: true, account, profile, verificationReset: Boolean(lawyerUpdate?.verificationChanged) });
+    }
+
+    if (req.method === "POST" && ["/api/avatar", "/api/article-cover"].includes(url.pathname)) {
+      const user = currentUser(req);
+      if (!user) return json(res, 401, { error: "اول وارد حسابت شو." });
+      const avatar = url.pathname === "/api/avatar";
+      if (!avatar && user.role !== "lawyer" && !hasAdminPermission(user, "content.manage")) return json(res, 403, { error: "اجازه بارگذاری تصویر مقاله رو نداری." });
+      const { file } = await parseMultipart(req);
+      const { mimeType, extension } = inspectUpload(file);
+      if (!mimeType.startsWith("image/")) return json(res, 415, { error: "برای عکس فقط JPG یا PNG انتخاب کن." });
+      const storedName = `${randomBytes(24).toString("hex")}${extension}`;
+      const diskPath = resolve(uploadsDirectory, storedName);
+      writeFileSync(diskPath, file.buffer, { flag: "wx", mode: 0o600 });
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const result = db.prepare("INSERT INTO documents(owner_id,kind,file_name,path,mime_type,size_bytes,status) VALUES(?,?,?,?,?,?,'approved')").run(user.id, avatar ? "avatar" : "article_cover", `image${extension}`, `data/uploads/${storedName}`, mimeType, file.buffer.length);
+        const mediaUrl = `/api/media/${result.lastInsertRowid}`;
+        if (avatar) db.prepare("UPDATE users SET avatar_url=? WHERE id=?").run(mediaUrl, user.id);
+        db.exec("COMMIT");
+        return json(res, 201, { ok: true, url: mediaUrl, avatar_url: avatar ? mediaUrl : undefined, cover_image: avatar ? undefined : mediaUrl });
+      } catch (error) { db.exec("ROLLBACK"); try { unlinkSync(diskPath); } catch {} throw error; }
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/site-media") {
+      const user = currentUser(req);
+      if (!user) return json(res, 401, { error: "اول وارد حسابت شو." });
+      if (!hasAdminPermission(user, "settings.manage")) return json(res, 403, { error: "مجوز مدیریت رسانه‌های سایت را نداری." });
+      const { file } = await parseMultipart(req);
+      const originalName = String(file.fileName).split(/[\\/]/).pop()?.trim() || "";
+      if (!originalName || originalName.length > 180 || /[\u0000-\u001f\u007f]/.test(originalName) || basename(originalName) !== originalName) return json(res, 400, { error: "نام فایل معتبر نیست." });
+      const { mimeType, extension } = inspectUpload(file);
+      if (!mimeType.startsWith("image/")) return json(res, 415, { error: "برای رسانه سایت فقط JPG یا PNG انتخاب کن." });
+      const storedName = `${randomBytes(24).toString("hex")}${extension}`;
+      const diskPath = resolve(uploadsDirectory, storedName);
+      writeFileSync(diskPath, file.buffer, { flag: "wx", mode: 0o600 });
+      try {
+        const result = db.prepare("INSERT INTO documents(owner_id,kind,file_name,path,mime_type,size_bytes,status) VALUES(?,?,?,?,?,?,'approved')").run(user.id, "site_media", originalName, `data/uploads/${storedName}`, mimeType, file.buffer.length);
+        const mediaUrl = `/api/media/${result.lastInsertRowid}`;
+        return json(res, 201, { ok: true, url: mediaUrl, media_url: mediaUrl });
+      } catch (error) {
+        try { unlinkSync(diskPath); } catch {}
+        throw error;
+      }
+    }
+
+    const mediaDownload = /^\/api\/media\/(\d+)$/.exec(url.pathname);
+    if (req.method === "GET" && mediaDownload) {
+      const media = db.prepare("SELECT * FROM documents WHERE id=? AND kind IN ('avatar','article_cover','site_media') AND status='approved'").get(Number(mediaDownload[1]));
+      const diskPath = media && safeDiskPath(media.path);
+      if (!diskPath || !existsSync(diskPath) || !["image/png", "image/jpeg"].includes(media.mime_type)) return json(res, 404, { error: "عکس پیدا نشد." });
+      const contents = readFileSync(diskPath);
+      res.writeHead(200, { "Content-Type": media.mime_type, "Content-Length": String(contents.length), "X-Content-Type-Options": "nosniff", "Cache-Control": "public, max-age=3600", "Access-Control-Allow-Origin": "*" });
+      return res.end(contents);
     }
 
     if (req.method === "POST" && url.pathname === "/api/documents") {
@@ -454,7 +680,9 @@ const server = createServer(async (req, res) => {
       if (!originalName || originalName.length > 180 || /[\u0000-\u001f\u007f]/.test(originalName) || basename(originalName) !== originalName) return json(res, 400, { error: "نام فایل معتبر نیست" });
       const { mimeType, extension } = inspectUpload(file);
       const requestedKind = cleanText(fields.kind || "general");
-      const kind = /^[\p{L}\p{N}_-]{1,50}$/u.test(requestedKind) ? requestedKind : "general";
+      const allowedKinds = new Set(["general", "identity", "identity_card", "license", "bar_license", "case", "contract", "evidence", "question", "consultation"]);
+      if (!allowedKinds.has(requestedKind)) return json(res, 400, { error: "نوع مدرک رو از گزینه‌های موجود انتخاب کن." });
+      const kind = requestedKind;
       const questionId = fields.questionId || fields.question_id ? validId(fields.questionId || fields.question_id) : null;
       const consultationId = fields.consultationId || fields.consultation_id ? validId(fields.consultationId || fields.consultation_id) : null;
       if ((fields.questionId || fields.question_id) && !questionId || (fields.consultationId || fields.consultation_id) && !consultationId) return json(res, 400, { error: "شناسه پرونده معتبر نیست" });
@@ -471,7 +699,7 @@ const server = createServer(async (req, res) => {
       if (questionId) {
         const question = db.prepare("SELECT * FROM questions WHERE id=?").get(questionId);
         const assigned = ownLawyer && db.prepare("SELECT 1 FROM question_assignments WHERE question_id=? AND lawyer_id=? AND status IN ('assigned','answered')").get(questionId, ownLawyer.id);
-        if (!question || question.client_id !== user.id && question.lawyer_id !== ownLawyer?.id && !assigned) return json(res, 403, { error: "به این پرسش دسترسی ندارید" });
+        if (!question || question.client_id !== user.id && !assigned) return json(res, 403, { error: "به این پرسش دسترسی ندارید" });
         linkedLawyerId = question.lawyer_id ?? linkedLawyerId;
       }
       const storedName = `${randomBytes(24).toString("hex")}${extension}`;
@@ -479,7 +707,7 @@ const server = createServer(async (req, res) => {
       if (!safeDiskPath(`data/uploads/${storedName}`)) return json(res, 400, { error: "مسیر فایل معتبر نیست" });
       writeFileSync(diskPath, file.buffer, { flag: "wx", mode: 0o600 });
       try {
-        const result = db.prepare("INSERT INTO documents(owner_id,lawyer_id,question_id,consultation_id,kind,file_name,path,mime_type,size_bytes,status) VALUES(?,?,?,?,?,?,?,?,?,'pending')").run(user.id, linkedLawyerId, questionId, consultationId, kind, originalName, `data/uploads/${storedName}`, mimeType, file.buffer.length);
+        const result = db.prepare("INSERT INTO documents(owner_id,lawyer_id,question_id,consultation_id,kind,file_name,path,mime_type,size_bytes,status) VALUES(?,?,?,?,?,?,?,?,?,?)").run(user.id, linkedLawyerId, questionId, consultationId, kind, originalName, `data/uploads/${storedName}`, mimeType, file.buffer.length, questionId || consultationId ? "approved" : "pending");
         const document = db.prepare("SELECT * FROM documents WHERE id=?").get(result.lastInsertRowid);
         return json(res, 201, { ok: true, document: publicDocument(document) });
       } catch (error) {
@@ -522,10 +750,14 @@ const server = createServer(async (req, res) => {
       if (lawyerId && !db.prepare("SELECT 1 FROM lawyers l JOIN users u ON u.id=l.user_id WHERE l.id=? AND l.verified=1 AND u.status='active'").get(lawyerId)) return json(res, 400, { error: "وکیل انتخاب‌شده معتبر یا تأییدشده نیست" });
       db.exec("BEGIN IMMEDIATE");
       try {
+        if (db.prepare("SELECT COUNT(*) count FROM questions WHERE client_id=?").get(user.id).count >= settingNumber("free_question_limit", 3)) throw new ApiError(409, "سهم پرسش رایگانت تموم شده. می‌تونی مشاوره پولی بگیری.");
+        const assignedIds = lawyerId ? [lawyerId] : db.prepare("SELECT l.id FROM lawyers l JOIN users u ON u.id=l.user_id WHERE l.verified=1 AND u.status='active' ORDER BY l.featured DESC,l.rating DESC,l.id LIMIT ?").all(answerLimit()).map((row) => row.id);
         const result = db.prepare("INSERT INTO questions(client_id,lawyer_id,topic,body,kind,status,publish_allowed,urgent) VALUES(?,?,?,?,?,?,?,?)").run(user.id, lawyerId, topic, questionBody, lawyerId ? "direct" : "public", lawyerId ? "assigned" : "pending_assignment", body.publishAllowed === true ? 1 : 0, body.urgent === true ? 1 : 0);
-        if (lawyerId) db.prepare("INSERT INTO question_assignments(question_id,lawyer_id,status) VALUES(?,?,'assigned')").run(result.lastInsertRowid, lawyerId);
+        for (const assignedId of assignedIds) db.prepare("INSERT INTO question_assignments(question_id,lawyer_id,status) VALUES(?,?,'assigned')").run(result.lastInsertRowid, assignedId);
+        const status = assignedIds.length ? "assigned" : "pending_assignment";
+        db.prepare("UPDATE questions SET status=? WHERE id=?").run(status, result.lastInsertRowid);
         db.exec("COMMIT");
-        return json(res, 201, { ok: true, id: Number(result.lastInsertRowid), status: lawyerId ? "assigned" : "pending_assignment" });
+        return json(res, 201, { ok: true, id: Number(result.lastInsertRowid), status, assignedLawyerIds: assignedIds });
       } catch (error) {
         db.exec("ROLLBACK");
         throw error;
@@ -539,27 +771,48 @@ const server = createServer(async (req, res) => {
       if (user.role !== "client") return json(res, 403, { error: "ثبت مشاوره از حساب موکل انجام می‌شود" });
       const type = cleanText(body.type);
       const topic = validText(body.topic, 2, 500);
-      if (!["phone", "in_person"].includes(type)) return json(res, 400, { error: "فقط مشاوره تلفنی یا حضوری قابل پرداخت است؛ پرسش متنی رایگان است" });
+      const description = body.description == null || body.description === "" ? null : validText(body.description, 1, 4000);
+      if (!["phone", "in_person", "text"].includes(type)) return json(res, 400, { error: "نوع مشاوره رو درست انتخاب کن." });
       if (!topic) return json(res, 400, { error: "موضوع مشاوره معتبر لازم است" });
+      if (body.description != null && body.description !== "" && !description) return json(res, 400, { error: "شرح درخواست باید حداکثر ۴۰۰۰ نویسه باشه." });
       if (type === "in_person" && db.prepare("SELECT value FROM settings WHERE key='global_in_person_enabled'").get()?.value === "0") return json(res, 503, { error: "مشاوره حضوری موقتاً غیرفعال است" });
       let lawyerId = body.lawyerId == null || body.lawyerId === "" ? null : validId(body.lawyerId);
-      const slotId = body.slotId == null || body.slotId === "" ? null : validId(body.slotId);
+      const slotId = type === "in_person" && body.slotId != null && body.slotId !== "" ? validId(body.slotId) : null;
       if (body.lawyerId != null && body.lawyerId !== "" && !lawyerId || body.slotId != null && body.slotId !== "" && !slotId) return json(res, 400, { error: "شناسه وکیل یا زمان انتخابی معتبر نیست" });
-      if (type === "in_person" && (!lawyerId || !slotId)) return json(res, 400, { error: "برای مشاوره حضوری انتخاب وکیل و یک زمان آزاد الزامی است" });
-      if (slotId && !lawyerId) return json(res, 400, { error: "زمان آزاد باید همراه وکیل انتخاب شود" });
+      let selectedSlot = null;
+      if (type === "in_person") {
+        if (!slotId) return json(res, 400, { error: "برای مشاوره حضوری یک زمان آزاد انتخاب کن." });
+        selectedSlot = db.prepare(`SELECT s.* FROM appointment_slots s
+          JOIN lawyers l ON l.id=s.lawyer_id JOIN users u ON u.id=l.user_id
+          WHERE s.id=? AND s.consultation_type='in_person' AND s.status='available'
+          AND datetime(s.starts_at)>datetime('now') AND l.verified=1 AND l.in_person_enabled=1 AND u.status='active'`).get(slotId);
+        if (!selectedSlot) return json(res, 409, { error: "این زمان حضوری دیگه در دسترس نیست." });
+        if (lawyerId && lawyerId !== selectedSlot.lawyer_id) return json(res, 400, { error: "زمان انتخابی به این وکیل تعلق نداره." });
+        lawyerId = selectedSlot.lawyer_id;
+      }
       let lawyer = lawyerId ? db.prepare("SELECT l.* FROM lawyers l JOIN users u ON u.id=l.user_id WHERE l.id=? AND l.verified=1 AND u.status='active'").get(lawyerId) : null;
       if (lawyerId && !lawyer) return json(res, 400, { error: "وکیل انتخاب‌شده معتبر یا تأییدشده نیست" });
+      if (type === "text" && !lawyer) {
+        const defaultTextPrice = settingNumber("default_text_price", 200000);
+        lawyer = db.prepare("SELECT l.* FROM lawyers l JOIN users u ON u.id=l.user_id WHERE l.verified=1 AND u.status='active' ORDER BY l.rating DESC,l.featured DESC,l.online DESC,l.id")
+          .all()
+          .find((candidate) => priceAllowed("text", Number(candidate.text_price || defaultTextPrice)));
+        if (!lawyer) return json(res, 409, { error: "فعلاً وکیل آماده‌ای برای مشاوره متنی پیدا نشد." });
+        lawyerId = lawyer.id;
+      }
+      const sourceQuestionId = body.sourceQuestionId ? validId(body.sourceQuestionId) : null;
+      if (body.sourceQuestionId && !sourceQuestionId) return json(res, 400, { error: "پرسش اصلی رو درست انتخاب کن." });
+      if (sourceQuestionId && (type !== "text" || !db.prepare("SELECT 1 FROM questions q JOIN answers a ON a.question_id=q.id WHERE q.id=? AND q.client_id=? AND a.lawyer_id=?").get(sourceQuestionId, user.id, lawyerId))) return json(res, 403, { error: "این ادامه مشاوره به پرسش و وکیل انتخابی مرتبط نیست." });
       if (type === "in_person" && (!lawyer.in_person_enabled || !lawyer.in_person_price)) return json(res, 400, { error: "مشاوره حضوری برای این وکیل فعال نیست" });
-      let scheduledAt = validIsoFuture(body.scheduledAt, true);
-      if (scheduledAt === undefined) return json(res, 400, { error: "زمان مشاوره باید تاریخ ISO معتبر و در آینده باشد" });
-      const defaultPrice = Number(db.prepare("SELECT value FROM settings WHERE key=?").get(type === "phone" ? "default_phone_price" : "default_in_person_price")?.value || 0);
-      const amount = Number(lawyer ? type === "phone" ? lawyer.phone_price : lawyer.in_person_price : defaultPrice);
+      let scheduledAt = selectedSlot ? new Date(selectedSlot.starts_at).toISOString() : null;
+      const defaultPrice = settingNumber(`default_${type}_price`, type === "text" ? 200000 : 0);
+      const amount = Number(lawyer ? lawyer[`${type}_price`] || defaultPrice : defaultPrice);
       const commissionRate = Number(db.prepare("SELECT value FROM settings WHERE key='site_commission'").get()?.value || 0);
       if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 100000000 || !Number.isFinite(commissionRate) || commissionRate < 0 || commissionRate > 100) return json(res, 409, { error: "تعرفه معتبر برای این مشاوره ثبت نشده است" });
       const commissionAmount = Math.round(amount * commissionRate / 100);
       const trackingCode = `DR-${Date.now().toString(36).toUpperCase()}-${randomBytes(4).toString("hex").toUpperCase()}`;
       const deferPayment = body.deferPayment === true;
-      const status = deferPayment ? "pending_payment" : lawyer ? "registered" : "pending_assignment";
+      const status = deferPayment ? "pending_payment" : type === "phone" ? "pending_coordination" : type === "text" ? "confirmed" : lawyer ? "registered" : "pending_assignment";
       const paymentStatus = deferPayment ? "pending" : "simulated_paid";
       const orderStatus = deferPayment ? "pending" : "paid";
       let consultationId;
@@ -572,9 +825,10 @@ const server = createServer(async (req, res) => {
           const consumed = db.prepare("UPDATE appointment_slots SET status='booked' WHERE id=? AND status='available'").run(slotId);
           if (!consumed.changes) throw new ApiError(409, "زمان انتخاب‌شده دیگر در دسترس نیست");
         }
-        const result = db.prepare("INSERT INTO consultations(client_id,lawyer_id,slot_id,type,topic,scheduled_at,amount,payment_status,status) VALUES(?,?,?,?,?,?,?,?,?)").run(user.id, lawyerId, slotId, type, topic, scheduledAt, amount, paymentStatus, status);
+        const result = db.prepare("INSERT INTO consultations(client_id,lawyer_id,slot_id,type,topic,description,scheduled_at,amount,payment_status,status,source_question_id,message_limit) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(user.id, lawyerId, slotId, type, topic, description, scheduledAt, amount, paymentStatus, status, sourceQuestionId, settingNumber("text_message_limit", 3));
         consultationId = Number(result.lastInsertRowid);
         db.prepare("INSERT INTO orders(client_id,consultation_id,type,amount,commission_rate,commission_amount,status,tracking_code,paid_at) VALUES(?,?,?,?,?,?,?,?,CASE WHEN ?='paid' THEN CURRENT_TIMESTAMP ELSE NULL END)").run(user.id, consultationId, type, amount, commissionRate, commissionAmount, orderStatus, trackingCode, orderStatus);
+        if (type === "text" && !deferPayment) ensureConversation(db.prepare("SELECT * FROM consultations WHERE id=?").get(consultationId));
         db.exec("COMMIT");
       } catch (error) {
         db.exec("ROLLBACK");
@@ -583,6 +837,7 @@ const server = createServer(async (req, res) => {
       return json(res, 201, {
         ok: true,
         id: consultationId,
+        lawyerId,
         amount,
         commissionRate,
         status,
@@ -591,6 +846,7 @@ const server = createServer(async (req, res) => {
         paymentRequired: deferPayment,
         checkoutPath: deferPayment ? `/api/checkout/${trackingCode}` : null,
         scheduledAt,
+        message: type === "phone" ? "پشتیبانی برای هماهنگی زمان مشاوره باهات تماس می‌گیره. بعد از هماهنگی، زمانش رو توی پنلت می‌بینی." : null,
       });
     }
 
@@ -623,10 +879,11 @@ const server = createServer(async (req, res) => {
             if (checkout.order.status !== "pending" || checkout.consultation.status !== "pending_payment" || checkout.consultation.paymentStatus !== "pending") {
               throw new ApiError(409, "این سفارش در وضعیت قابل پرداخت نیست");
             }
-            const nextStatus = checkout.consultation.lawyerId ? "registered" : "pending_assignment";
+            const nextStatus = checkout.consultation.type === "phone" ? "pending_coordination" : checkout.consultation.type === "text" ? "confirmed" : checkout.consultation.lawyerId ? "registered" : "pending_assignment";
             const paid = db.prepare("UPDATE orders SET status='paid',paid_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").run(checkout.order.id);
             const confirmed = db.prepare("UPDATE consultations SET payment_status='simulated_paid',status=? WHERE id=? AND status='pending_payment' AND payment_status='pending'").run(nextStatus, checkout.consultation.id);
             if (!paid.changes || !confirmed.changes) throw new ApiError(409, "وضعیت پرداخت هم‌زمان تغییر کرده است");
+            if (checkout.consultation.type === "text") ensureConversation(db.prepare("SELECT * FROM consultations WHERE id=?").get(checkout.consultation.id));
             result = checkoutDetails(trackingCode);
           }
           db.exec("COMMIT");
@@ -682,7 +939,7 @@ const server = createServer(async (req, res) => {
       if (user.role === "client") {
         if (consultation.client_id !== user.id) return json(res, 403, { error: "به این مشاوره دسترسی ندارید" });
         if (action !== "cancel") return json(res, 403, { error: "این عملیات برای موکل مجاز نیست" });
-        if (!["pending_assignment", "registered", "confirmed"].includes(consultation.status)) return json(res, 409, { error: "این مشاوره در وضعیت فعلی قابل لغو نیست" });
+        if (!["pending_assignment", "pending_coordination", "registered", "confirmed"].includes(consultation.status)) return json(res, 409, { error: "این مشاوره در وضعیت فعلی قابل لغو نیست" });
         nextStatus = "cancelled";
       } else if (user.role === "lawyer") {
         const lawyer = lawyerForUser(user.id);
@@ -703,6 +960,7 @@ const server = createServer(async (req, res) => {
         const requested = cleanText(body.status);
         const transitions = {
           pending_assignment: ["registered", "cancelled"],
+          pending_coordination: ["cancelled"],
           registered: ["confirmed", "rejected", "cancelled"],
           confirmed: ["in_progress", "completed", "cancelled"],
           in_progress: ["completed"],
@@ -751,13 +1009,56 @@ const server = createServer(async (req, res) => {
       if (!conversation) return json(res, 404, { error: "گفت‌وگو پیدا نشد" });
       const ownLawyer = user.role === "lawyer" ? lawyerForUser(user.id) : null;
       if (conversation.client_id !== user.id && conversation.lawyer_id !== ownLawyer?.id) return json(res, 403, { error: "به این گفت‌وگو دسترسی ندارید" });
-      const consultation = db.prepare("SELECT status FROM consultations WHERE id=?").get(conversation.consultation_id);
+      const consultation = db.prepare("SELECT * FROM consultations WHERE id=?").get(conversation.consultation_id);
+      if (consultation?.type !== "text") return json(res, 409, { error: "این مشاوره متنی نیست و گفت‌وگوی چتی نداره." });
       if (conversation.status !== "open" || !["confirmed", "in_progress"].includes(consultation?.status)) return json(res, 409, { error: "این گفت‌وگو بسته است" });
       const messageBody = validText(body.body, 1, 4000);
       if (!messageBody) return json(res, 400, { error: "متن پیام باید بین ۱ تا ۴۰۰۰ نویسه باشد" });
-      const result = db.prepare("INSERT INTO chat_messages(conversation_id,sender_id,body) VALUES(?,?,?)").run(conversation.id, user.id, messageBody);
-      const message = db.prepare("SELECT cm.id,cm.conversation_id,cm.sender_id,cm.body,cm.created_at,u.first_name||' '||u.last_name sender_name,u.role sender_role FROM chat_messages cm JOIN users u ON u.id=cm.sender_id WHERE cm.id=?").get(result.lastInsertRowid);
-      return json(res, 201, { ok: true, message });
+      let result;
+      let usageAfter;
+      let conversationStatus = conversation.status;
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const liveConversation = db.prepare("SELECT * FROM conversations WHERE id=?").get(conversation.id);
+        const liveConsultation = db.prepare("SELECT * FROM consultations WHERE id=? AND type='text'").get(conversation.consultation_id);
+        if (liveConversation?.status !== "open" || !["confirmed", "in_progress"].includes(liveConsultation?.status)) throw new ApiError(409, "این گفت‌وگو بسته است");
+        const limit = liveConsultation.message_limit || settingNumber("text_message_limit", 3);
+        const lawyerUserId = db.prepare("SELECT user_id FROM lawyers WHERE id=?").get(liveConversation.lawyer_id)?.user_id;
+        const usageBefore = conversationTurnUsage(liveConversation.id, liveConversation.client_id, lawyerUserId);
+        const participant = liveConversation.client_id === user.id ? "client" : "lawyer";
+        const startsNewTurn = usageBefore.lastSenderId !== user.id;
+        if (startsNewTurn && usageBefore[participant] >= limit) {
+          if (usageBefore.client >= limit && usageBefore.lawyer >= limit) {
+            db.prepare("UPDATE conversations SET status='closed' WHERE id=?").run(conversation.id);
+            db.prepare("UPDATE consultations SET status='completed',completed_at=CURRENT_TIMESTAMP WHERE id=?").run(consultation.id);
+            db.exec("COMMIT");
+            return json(res, 409, { error: "نوبت‌های این گفت‌وگو تموم شده. برای ادامه یک مشاوره تازه بگیر.", conversation_status: "closed", turn_limit: limit, turn_usage: { client: usageBefore.client, lawyer: usageBefore.lawyer } });
+          }
+          throw new ApiError(409, "سهم نوبت‌های گفت‌وگوت تموم شده. برای ادامه یک مشاوره تازه بگیر.");
+        }
+        result = db.prepare("INSERT INTO chat_messages(conversation_id,sender_id,body) VALUES(?,?,?)").run(conversation.id, user.id, messageBody);
+        usageAfter = {
+          client: usageBefore.client + (startsNewTurn && participant === "client" ? 1 : 0),
+          lawyer: usageBefore.lawyer + (startsNewTurn && participant === "lawyer" ? 1 : 0),
+        };
+        if (usageAfter.client >= limit && usageAfter.lawyer >= limit) {
+          db.prepare("UPDATE conversations SET status='closed' WHERE id=?").run(conversation.id);
+          db.prepare("UPDATE consultations SET status='completed',completed_at=CURRENT_TIMESTAMP WHERE id=?").run(consultation.id);
+          conversationStatus = "closed";
+        }
+        db.exec("COMMIT");
+      } catch (error) { db.exec("ROLLBACK"); throw error; }
+      const limit = consultation.message_limit || settingNumber("text_message_limit", 3);
+      const message = db.prepare("SELECT cm.id,cm.conversation_id,cm.sender_id,cm.body,cm.created_at,u.first_name||' '||u.last_name sender_name,u.role sender_role,COALESCE(u.avatar_url,'/avatars/default-'||u.role||'.png') sender_avatar_url FROM chat_messages cm JOIN users u ON u.id=cm.sender_id WHERE cm.id=?").get(result.lastInsertRowid);
+      return json(res, 201, {
+        ok: true,
+        message,
+        conversation_status: conversationStatus,
+        turn_limit: limit,
+        turn_usage: usageAfter,
+        turns_remaining: { client: Math.max(0, limit - usageAfter.client), lawyer: Math.max(0, limit - usageAfter.lawyer) },
+        quota_complete: usageAfter.client >= limit && usageAfter.lawyer >= limit,
+      });
     }
 
     if (req.method === "POST" && url.pathname === "/api/answers") {
@@ -780,10 +1081,11 @@ const server = createServer(async (req, res) => {
       let result;
       db.exec("BEGIN IMMEDIATE");
       try {
+        if (db.prepare("SELECT COUNT(*) count FROM answers WHERE question_id=?").get(questionId).count >= answerLimit()) throw new ApiError(409, "تعداد پاسخ‌های این پرسش به سقف مجاز رسیده.");
         result = db.prepare("INSERT INTO answers(question_id,lawyer_id,body,published) VALUES(?,?,?,?)").run(questionId, lawyer.id, answerBody, question.publish_allowed ? 1 : 0);
         db.prepare("UPDATE question_assignments SET status='answered' WHERE question_id=? AND lawyer_id=?").run(questionId, lawyer.id);
         const remaining = db.prepare("SELECT COUNT(*) count FROM question_assignments WHERE question_id=? AND status='assigned'").get(questionId).count;
-        db.prepare("UPDATE questions SET status=? WHERE id=?").run(remaining ? "assigned" : "answered", questionId);
+        db.prepare("UPDATE questions SET status=? WHERE id=?").run(remaining && db.prepare("SELECT COUNT(*) count FROM answers WHERE question_id=?").get(questionId).count < answerLimit() ? "assigned" : "answered", questionId);
         db.exec("COMMIT");
       } catch (error) {
         db.exec("ROLLBACK");
@@ -858,22 +1160,40 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { stats });
     }
 
+    if (req.method === "POST" && url.pathname === "/api/notifications/read") {
+      const user = currentUser(req);
+      if (!user) return json(res, 401, { error: "اول وارد حسابت شو." });
+      const body = await readBody(req);
+      if (!Array.isArray(body.ids) || body.ids.length > 200 || body.ids.some((id) => typeof id !== "string" || id.length > 160)) return json(res, 400, { error: "اعلان‌ها معتبر نیستن." });
+      const ids = [...new Set([...jsonSetting(`notification_seen_${user.id}`, []), ...body.ids])].slice(-2000);
+      db.prepare("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(`notification_seen_${user.id}`, JSON.stringify(ids));
+      return json(res, 200, { ok: true });
+    }
+
     if (req.method === "GET" && url.pathname === "/api/dashboard") {
       const user = currentUser(req);
       if (!user) return json(res, 401, { error: "ورود لازم است" });
 
       if (user.role === "client") {
         const questionRows = db.prepare("SELECT id,lawyer_id,topic,body,kind,status,publish_allowed,urgent,created_at FROM questions WHERE client_id=? ORDER BY created_at DESC").all(user.id);
-        const answerStatement = db.prepare("SELECT a.id,a.question_id,a.lawyer_id,a.body,a.published,a.created_at,u.first_name||' '||u.last_name lawyer_name FROM answers a JOIN lawyers l ON l.id=a.lawyer_id JOIN users u ON u.id=l.user_id WHERE a.question_id=? ORDER BY a.created_at");
-        const questions = questionRows.map((question) => ({ ...question, answers: answerStatement.all(question.id) }));
-        const consultations = db.prepare("SELECT c.*,u.first_name||' '||u.last_name lawyer_name,o.tracking_code,o.status order_status FROM consultations c LEFT JOIN lawyers l ON l.id=c.lawyer_id LEFT JOIN users u ON u.id=l.user_id LEFT JOIN orders o ON o.consultation_id=c.id WHERE c.client_id=? ORDER BY c.created_at DESC").all(user.id);
+        const answerStatement = db.prepare("SELECT a.id,a.question_id,a.lawyer_id,a.body,a.published,a.created_at,u.first_name||' '||u.last_name lawyer_name,u.avatar_url lawyer_avatar_url FROM answers a JOIN lawyers l ON l.id=a.lawyer_id JOIN users u ON u.id=l.user_id WHERE a.question_id=? ORDER BY a.created_at");
+        const questions = questionRows.map((question) => {
+          const answers = answerStatement.all(question.id).slice(0, answerLimit());
+          return { ...question, answers, attachments: documentsForQuestion(question.id), closed: question.status === "cancelled" || answers.length > 0 };
+        });
+        const consultations = db.prepare("SELECT c.*,u.first_name||' '||u.last_name lawyer_name,o.tracking_code,o.status order_status FROM consultations c LEFT JOIN lawyers l ON l.id=c.lawyer_id LEFT JOIN users u ON u.id=l.user_id LEFT JOIN orders o ON o.consultation_id=c.id WHERE c.client_id=? ORDER BY c.created_at DESC").all(user.id)
+          .map((consultation) => ({ ...consultation, attachments: documentsForConsultation(consultation.id, user) }));
         const orders = db.prepare("SELECT o.*,c.topic,c.status consultation_status,u.first_name||' '||u.last_name lawyer_name FROM orders o LEFT JOIN consultations c ON c.id=o.consultation_id LEFT JOIN lawyers l ON l.id=c.lawyer_id LEFT JOIN users u ON u.id=l.user_id WHERE o.client_id=? ORDER BY o.created_at DESC").all(user.id);
         const bookmarks = db.prepare("SELECT l.id,l.specialties,l.rating,l.online,l.in_person_enabled,u.first_name||' '||u.last_name name,u.city,b.created_at FROM bookmarks b JOIN lawyers l ON l.id=b.lawyer_id JOIN users u ON u.id=l.user_id WHERE b.client_id=? ORDER BY b.created_at DESC").all(user.id);
         const reviews = db.prepare("SELECT r.*,u.first_name||' '||u.last_name lawyer_name FROM reviews r JOIN lawyers l ON l.id=r.lawyer_id JOIN users u ON u.id=l.user_id WHERE r.client_id=? ORDER BY r.created_at DESC").all(user.id);
         const eligibleReviews = db.prepare("SELECT c.id consultation_id,c.lawyer_id,c.type,c.topic,c.completed_at,u.first_name||' '||u.last_name lawyer_name FROM consultations c JOIN lawyers l ON l.id=c.lawyer_id JOIN users u ON u.id=l.user_id LEFT JOIN reviews r ON r.consultation_id=c.id WHERE c.client_id=? AND c.status='completed' AND r.id IS NULL ORDER BY c.completed_at DESC").all(user.id);
         const messages = db.prepare("SELECT id,name,phone,kind,subject,body,order_code,admin_reply,status,created_at,updated_at FROM messages WHERE user_id=? ORDER BY created_at DESC").all(user.id);
+        const conversations = conversationPayloads("client", user.id);
         return json(res, 200, {
           role: "client",
+          settings: settingsPayload(),
+          freeQuestionsRemaining: Math.max(0, settingNumber("free_question_limit", 3) - questions.length),
+          ...notificationPayload(user, { questions, consultations, conversations, messages, documents: documentsForOwner(user.id) }),
           account: accountFor(user.id),
           profile: accountFor(user.id),
           consultations,
@@ -883,7 +1203,7 @@ const server = createServer(async (req, res) => {
           reviews,
           eligibleReviews,
           documents: documentsForOwner(user.id),
-          conversations: conversationPayloads("client", user.id),
+          conversations,
           messages,
         });
       }
@@ -891,23 +1211,42 @@ const server = createServer(async (req, res) => {
       if (user.role === "lawyer") {
         const lawyer = lawyerForUser(user.id);
         if (!lawyer) return json(res, 404, { error: "پروفایل وکیل پیدا نشد" });
-        const profile = db.prepare("SELECT l.*,u.username,u.first_name,u.last_name,u.email,u.phone,u.province,u.city,u.status,u.created_at FROM lawyers l JOIN users u ON u.id=l.user_id WHERE l.id=?").get(lawyer.id);
-        const consultations = db.prepare("SELECT c.*,u.first_name||' '||u.last_name client_name,u.phone client_phone,o.tracking_code,o.status order_status FROM consultations c LEFT JOIN users u ON u.id=c.client_id LEFT JOIN orders o ON o.consultation_id=c.id WHERE c.lawyer_id=? ORDER BY c.created_at DESC").all(lawyer.id);
-        const questions = db.prepare("SELECT q.id,q.client_id,q.lawyer_id,q.topic,q.body,q.kind,q.status,q.publish_allowed,q.urgent,q.created_at,qa.status assignment_status,qa.assigned_at FROM question_assignments qa JOIN questions q ON q.id=qa.question_id WHERE qa.lawyer_id=? AND qa.status IN ('assigned','answered') ORDER BY q.created_at DESC").all(lawyer.id);
+        const profile = db.prepare("SELECT l.*,u.username,u.first_name,u.last_name,u.email,u.phone,u.province,u.city,u.status,u.avatar_url,u.created_at FROM lawyers l JOIN users u ON u.id=l.user_id WHERE l.id=?").get(lawyer.id);
+        profile.specialty_ids = specialtyIdsForLawyer(lawyer.id);
+        const services = db.prepare(`SELECT s.*,
+          EXISTS(SELECT 1 FROM lawyer_specialties ls WHERE ls.service_id=s.id AND ls.lawyer_id=?) selected
+          FROM services s
+          WHERE s.active=1 OR EXISTS(SELECT 1 FROM lawyer_specialties ls WHERE ls.service_id=s.id AND ls.lawyer_id=?)
+          ORDER BY s.sort_order,s.id`).all(lawyer.id, lawyer.id);
+        const consultations = db.prepare("SELECT c.*,u.first_name||' '||u.last_name client_name,u.phone client_phone,o.tracking_code,o.status order_status FROM consultations c LEFT JOIN users u ON u.id=c.client_id LEFT JOIN orders o ON o.consultation_id=c.id WHERE c.lawyer_id=? ORDER BY c.created_at DESC").all(lawyer.id)
+          .map((consultation) => ({ ...consultation, attachments: documentsForConsultation(consultation.id, user) }));
+        const lawyerQuestionRows = db.prepare("SELECT q.id,q.client_id,q.lawyer_id,q.topic,q.body,q.kind,q.status,q.publish_allowed,q.urgent,q.created_at,qa.status assignment_status,qa.assigned_at,u.first_name||' '||u.last_name client_name,u.avatar_url client_avatar_url FROM question_assignments qa JOIN questions q ON q.id=qa.question_id JOIN users u ON u.id=q.client_id WHERE qa.lawyer_id=? AND (qa.status IN ('assigned','answered') OR (q.status='cancelled' AND qa.status='withdrawn')) ORDER BY q.created_at DESC").all(lawyer.id);
+        const lawyerAnswerStatement = db.prepare("SELECT a.id,a.question_id,a.lawyer_id,a.body,a.published,a.created_at,u.first_name||' '||u.last_name lawyer_name,u.avatar_url lawyer_avatar_url FROM answers a JOIN lawyers l ON l.id=a.lawyer_id JOIN users u ON u.id=l.user_id WHERE a.question_id=? AND a.lawyer_id=? ORDER BY a.created_at");
+        const questions = lawyerQuestionRows.map((question) => ({
+          ...question,
+          answers: lawyerAnswerStatement.all(question.id, lawyer.id),
+          attachments: question.status === "cancelled" ? [] : documentsForQuestion(question.id),
+        }));
         const slots = db.prepare("SELECT id,lawyer_id,starts_at,ends_at,consultation_type,status FROM appointment_slots WHERE lawyer_id=? ORDER BY starts_at DESC").all(lawyer.id);
         const reviews = db.prepare("SELECT r.*,u.first_name||' '||substr(u.last_name,1,1)||'.' client_name FROM reviews r LEFT JOIN users u ON u.id=r.client_id WHERE r.lawyer_id=? ORDER BY r.created_at DESC").all(lawyer.id);
         const orders = db.prepare("SELECT o.*,c.topic,c.status consultation_status,u.first_name||' '||u.last_name client_name,(o.amount-o.commission_amount) net_amount FROM orders o JOIN consultations c ON c.id=o.consultation_id LEFT JOIN users u ON u.id=c.client_id WHERE c.lawyer_id=? ORDER BY o.created_at DESC").all(lawyer.id);
+        const articles = db.prepare("SELECT * FROM articles WHERE author_user_id=? ORDER BY created_at DESC").all(user.id);
+        const conversations = conversationPayloads("lawyer", lawyer.id);
         return json(res, 200, {
           role: "lawyer",
+          settings: settingsPayload(),
+          articles,
+          ...notificationPayload(user, { profile, questions, consultations, reviews, articles, conversations, documents: documentsForLawyer(lawyer) }),
           account: accountFor(user.id),
           profile,
+          services,
           consultations,
           questions,
           slots,
           reviews,
           orders,
           documents: documentsForLawyer(lawyer),
-          conversations: conversationPayloads("lawyer", lawyer.id),
+          conversations,
         });
       }
 
@@ -957,8 +1296,9 @@ const server = createServer(async (req, res) => {
         }
 
         if (can("consultations.manage") || can("reports.view")) {
-          data.consultations = db.prepare("SELECT c.*,cu.first_name||' '||cu.last_name client_name,lu.first_name||' '||lu.last_name lawyer_name,o.tracking_code,o.status order_status FROM consultations c LEFT JOIN users cu ON cu.id=c.client_id LEFT JOIN lawyers l ON l.id=c.lawyer_id LEFT JOIN users lu ON lu.id=l.user_id LEFT JOIN orders o ON o.consultation_id=c.id ORDER BY c.created_at DESC").all();
-          if (can("consultations.manage")) data.pendingConsultations = data.consultations.filter((consultation) => consultation.status === "pending_assignment" || consultation.status === "registered");
+          data.consultations = db.prepare("SELECT c.*,cu.first_name||' '||cu.last_name client_name,lu.first_name||' '||lu.last_name lawyer_name,o.tracking_code,o.status order_status FROM consultations c LEFT JOIN users cu ON cu.id=c.client_id LEFT JOIN lawyers l ON l.id=c.lawyer_id LEFT JOIN users lu ON lu.id=l.user_id LEFT JOIN orders o ON o.consultation_id=c.id ORDER BY c.created_at DESC").all()
+            .map((consultation) => ({ ...consultation, attachments: documentsForConsultation(consultation.id, user) }));
+          if (can("consultations.manage")) data.pendingConsultations = data.consultations.filter((consultation) => ["pending_assignment", "pending_coordination", "registered"].includes(consultation.status));
         }
 
         if (can("finance.view") || can("payments.manage") || can("reports.view")) {
@@ -981,13 +1321,15 @@ const server = createServer(async (req, res) => {
           data.messages = db.prepare("SELECT m.*,u.username FROM messages m LEFT JOIN users u ON u.id=m.user_id ORDER BY m.created_at DESC").all();
         }
         if (can("documents.manage")) {
-          data.documents = db.prepare("SELECT d.*,u.first_name||' '||u.last_name owner_name,lu.first_name||' '||lu.last_name lawyer_name FROM documents d JOIN users u ON u.id=d.owner_id LEFT JOIN lawyers l ON l.id=d.lawyer_id LEFT JOIN users lu ON lu.id=l.user_id ORDER BY d.created_at DESC").all().map(publicDocument);
+          data.documents = db.prepare("SELECT d.*,u.first_name||' '||u.last_name owner_name,lu.first_name||' '||lu.last_name lawyer_name FROM documents d JOIN users u ON u.id=d.owner_id LEFT JOIN lawyers l ON l.id=d.lawyer_id LEFT JOIN users lu ON lu.id=l.user_id WHERE d.consultation_id IS NULL AND d.question_id IS NULL AND d.kind<>'site_media' ORDER BY d.created_at DESC").all().map(publicDocument);
         }
         if (can("content.manage")) {
           data.articles = db.prepare("SELECT * FROM articles ORDER BY created_at DESC").all();
           data.faqs = db.prepare("SELECT * FROM faqs ORDER BY sort_order,id").all();
         }
-        if (can("services.manage")) data.services = db.prepare("SELECT * FROM services ORDER BY sort_order,id").all();
+        if (can("services.manage")) data.services = db.prepare(`SELECT s.*,COUNT(ls.id) lawyer_count
+          FROM services s LEFT JOIN lawyer_specialties ls ON ls.service_id=s.id
+          GROUP BY s.id ORDER BY s.sort_order,s.id`).all();
         if (can("settings.manage")) {
           data.settings = Object.fromEntries(db.prepare("SELECT key,value FROM settings WHERE key NOT IN ('primary_admin_id','primary_admin_username') ORDER BY key").all().map((setting) => [setting.key, setting.value]));
         }
@@ -996,8 +1338,8 @@ const server = createServer(async (req, res) => {
           data.permissions = db.prepare("SELECT admin_id,permission,allowed FROM admin_permissions ORDER BY admin_id,permission").all();
           data.permissionNames = permissionNames;
         }
-        if (can("lawyers.verify")) data.slots = db.prepare("SELECT s.*,u.first_name||' '||u.last_name lawyer_name FROM appointment_slots s JOIN lawyers l ON l.id=s.lawyer_id JOIN users u ON u.id=l.user_id ORDER BY s.starts_at DESC").all();
-        return json(res, 200, data);
+        if (can("lawyers.verify") || can("consultations.manage")) data.slots = db.prepare("SELECT s.*,u.first_name||' '||u.last_name lawyer_name FROM appointment_slots s JOIN lawyers l ON l.id=s.lawyer_id JOIN users u ON u.id=l.user_id ORDER BY s.starts_at DESC").all();
+        return json(res, 200, { ...data, ...notificationPayload(user, data) });
       }
 
       return json(res, 403, { error: "نقش حساب معتبر نیست" });
@@ -1093,13 +1435,40 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { ok: true });
       }
 
+      if (action === "cancel-question") {
+        if (!hasAdminPermission(user, "questions.assign")) return json(res, 403, { error: "مجوز لغو پرسش را نداری." });
+        const questionId = validId(body.id ?? body.questionId);
+        if (!questionId) return json(res, 400, { error: "شناسه پرسش معتبر نیست." });
+        const question = db.prepare("SELECT * FROM questions WHERE id=?").get(questionId);
+        if (!question) return json(res, 404, { error: "پرسش پیدا نشد." });
+        if (question.status === "cancelled") return json(res, 200, { ok: true, idempotent: true, status: "cancelled", withdrawn: 0 });
+        let withdrawn = 0;
+        db.exec("BEGIN IMMEDIATE");
+        try {
+          const cancelled = db.prepare("UPDATE questions SET status='cancelled' WHERE id=? AND status<>'cancelled'").run(question.id);
+          if (!cancelled.changes) {
+            db.exec("ROLLBACK");
+            return json(res, 200, { ok: true, idempotent: true, status: "cancelled", withdrawn: 0 });
+          }
+          withdrawn = db.prepare("UPDATE question_assignments SET status='withdrawn' WHERE question_id=? AND status='assigned'").run(question.id).changes;
+          db.prepare("UPDATE answers SET published=0 WHERE question_id=?").run(question.id);
+          db.exec("COMMIT");
+        } catch (error) {
+          db.exec("ROLLBACK");
+          throw error;
+        }
+        return json(res, 200, { ok: true, idempotent: false, status: "cancelled", withdrawn });
+      }
+
       if (action === "assign-question") {
         if (!hasAdminPermission(user, "questions.assign")) return json(res, 403, { error: "مجوز ارجاع پرسش را ندارید" });
         const questionId = validId(body.id ?? body.questionId);
         const requestedIds = Array.isArray(body.lawyerIds) ? [...new Set(body.lawyerIds.map(validId).filter(Boolean))] : [];
-        if (!questionId || !requestedIds.length || requestedIds.length > 5) return json(res, 400, { error: "پرسش و یک تا پنج وکیل معتبر لازم است" });
+        if (!questionId || !requestedIds.length || requestedIds.length > answerLimit()) return json(res, 400, { error: `برای این پرسش حداکثر ${answerLimit()} وکیل انتخاب کن.` });
         const question = db.prepare("SELECT * FROM questions WHERE id=?").get(questionId);
         if (!question || ["cancelled"].includes(question.status)) return json(res, 404, { error: "پرسش قابل ارجاع پیدا نشد" });
+        const answeredIds = db.prepare("SELECT lawyer_id FROM answers WHERE question_id=?").all(questionId).map((row) => row.lawyer_id);
+        if (new Set([...requestedIds, ...answeredIds]).size > answerLimit()) return json(res, 409, { error: "با احتساب وکلایی که پاسخ دادن، تعداد از سقف مجاز بیشتر می‌شه." });
         const placeholders = requestedIds.map(() => "?").join(",");
         const validLawyers = db.prepare("SELECT l.id FROM lawyers l JOIN users u ON u.id=l.user_id WHERE l.id IN (" + placeholders + ") AND l.verified=1 AND u.status='active'").all(...requestedIds).map((item) => item.id);
         if (validLawyers.length !== requestedIds.length) return json(res, 400, { error: "یکی از وکلای انتخاب‌شده معتبر یا فعال نیست" });
@@ -1117,6 +1486,26 @@ const server = createServer(async (req, res) => {
           throw error;
         }
         return json(res, 200, { ok: true, assigned: validLawyers });
+      }
+
+      if (action === "schedule-phone") {
+        if (!hasAdminPermission(user, "consultations.manage")) return json(res, 403, { error: "به مدیریت مشاوره دسترسی نداری." });
+        const consultationId = validId(body.id ?? body.consultationId);
+        const slotId = validId(body.slotId);
+        const consultation = db.prepare("SELECT * FROM consultations WHERE id=? AND type='phone'").get(consultationId);
+        if (!consultation || !["pending_coordination", "registered", "confirmed"].includes(consultation.status) || consultation.payment_status !== "simulated_paid") return json(res, 409, { error: "این مشاوره فعلاً قابل زمان‌بندی نیست." });
+        db.exec("BEGIN IMMEDIATE");
+        try {
+          const slot = db.prepare("SELECT s.* FROM appointment_slots s JOIN lawyers l ON l.id=s.lawyer_id JOIN users u ON u.id=l.user_id WHERE s.id=? AND s.consultation_type='phone' AND s.status='available' AND datetime(s.starts_at)>datetime('now') AND l.verified=1 AND u.status='active'").get(slotId);
+          if (!slot || body.lawyerId && slot.lawyer_id !== validId(body.lawyerId)) throw new ApiError(409, "این زمان آزاد تلفنی در دسترس نیست.");
+          releaseBookedSlot(consultation);
+          db.prepare("UPDATE appointment_slots SET status='booked' WHERE id=?").run(slot.id);
+          db.prepare("UPDATE consultations SET lawyer_id=?,slot_id=?,scheduled_at=?,status='confirmed' WHERE id=?").run(slot.lawyer_id, slot.id, slot.starts_at, consultation.id);
+          db.prepare("UPDATE documents SET lawyer_id=? WHERE consultation_id=?").run(slot.lawyer_id, consultation.id);
+          db.prepare("UPDATE conversations SET status='closed' WHERE consultation_id=?").run(consultation.id);
+          db.exec("COMMIT");
+        } catch (error) { db.exec("ROLLBACK"); throw error; }
+        return json(res, 200, { ok: true, consultation: db.prepare("SELECT * FROM consultations WHERE id=?").get(consultation.id) });
       }
 
       if (action === "moderate-answer") {
@@ -1185,6 +1574,7 @@ const server = createServer(async (req, res) => {
         const documentId = validId(body.id ?? body.documentId);
         const document = documentId ? db.prepare("SELECT * FROM documents WHERE id=?").get(documentId) : null;
         if (!document) return json(res, 404, { error: "مدرک پیدا نشد" });
+        if (document.kind === "site_media") return json(res, 409, { error: "رسانه‌های لوگو و اسلایدر فقط از تنظیمات سایت مدیریت می‌شن." });
         const diskPath = safeDiskPath(document.path);
         if (diskPath && existsSync(diskPath)) unlinkSync(diskPath);
         db.prepare("DELETE FROM documents WHERE id=?").run(document.id);
@@ -1193,19 +1583,25 @@ const server = createServer(async (req, res) => {
 
       if (action === "service-save") {
         if (!hasAdminPermission(user, "services.manage")) return json(res, 403, { error: "مجوز مدیریت خدمات را ندارید" });
-        const serviceId = body.id ? validId(body.id) : null;
+        const serviceIdProvided = body.id !== undefined && body.id !== null && body.id !== "";
+        const serviceId = serviceIdProvided ? validId(body.id) : null;
+        if (serviceIdProvided && !serviceId) return json(res, 400, { error: "شناسه حوزه تخصصی معتبر نیست" });
+        const existingService = serviceId ? db.prepare("SELECT * FROM services WHERE id=?").get(serviceId) : null;
         const title = validText(body.title, 2, 120);
         const description = validText(body.description, 5, 1000);
+        const backDescription = validText(body.backDescription ?? body.back_description ?? existingService?.back_description ?? description, 5, 1600);
+        const caseTypes = validTextList(body.caseTypes ?? body.case_types ?? existingService?.case_types ?? []);
         const icon = /^[a-z0-9-]{2,40}$/.test(cleanText(body.icon)) ? cleanText(body.icon) : "scale";
         const sortOrder = Number(body.sortOrder ?? 0);
         const active = body.active === false ? 0 : 1;
-        if (!title || !description || !Number.isSafeInteger(sortOrder) || sortOrder < 0 || sortOrder > 10000) return json(res, 400, { error: "اطلاعات خدمت معتبر نیست" });
+        if (!title || !description || !backDescription || !caseTypes || !Number.isSafeInteger(sortOrder) || sortOrder < 0 || sortOrder > 10000) return json(res, 400, { error: "اطلاعات حوزه تخصصی معتبر نیست؛ متن پشت کارت و حداکثر ۱۲ نمونه پرونده را بررسی کن." });
         try {
           if (serviceId) {
-            const changed = db.prepare("UPDATE services SET title=?,description=?,icon=?,active=?,sort_order=? WHERE id=?").run(title, description, icon, active, sortOrder, serviceId);
+            const changed = db.prepare("UPDATE services SET title=?,description=?,back_description=?,case_types=?,icon=?,active=?,sort_order=? WHERE id=?").run(title, description, backDescription, JSON.stringify(caseTypes), icon, active, sortOrder, serviceId);
             if (!changed.changes) return json(res, 404, { error: "خدمت پیدا نشد" });
+            for (const { lawyer_id: lawyerId } of db.prepare("SELECT lawyer_id FROM lawyer_specialties WHERE service_id=?").all(serviceId)) refreshLawyerSpecialtyCache(lawyerId);
           } else {
-            db.prepare("INSERT INTO services(title,description,icon,active,sort_order) VALUES(?,?,?,?,?)").run(title, description, icon, active, sortOrder);
+            db.prepare("INSERT INTO services(title,description,back_description,case_types,icon,active,sort_order) VALUES(?,?,?,?,?,?,?)").run(title, description, backDescription, JSON.stringify(caseTypes), icon, active, sortOrder);
           }
         } catch (error) {
           if (String(error.message).includes("UNIQUE")) return json(res, 409, { error: "عنوان خدمت تکراری است" });
@@ -1217,7 +1613,10 @@ const server = createServer(async (req, res) => {
       if (action === "service-delete") {
         if (!hasAdminPermission(user, "services.manage")) return json(res, 403, { error: "مجوز مدیریت خدمات را ندارید" });
         const serviceId = validId(body.id ?? body.serviceId);
-        if (!serviceId || !db.prepare("DELETE FROM services WHERE id=?").run(serviceId).changes) return json(res, 404, { error: "خدمت پیدا نشد" });
+        if (!serviceId) return json(res, 400, { error: "شناسه حوزه تخصصی معتبر نیست" });
+        const linkedLawyers = db.prepare("SELECT COUNT(*) count FROM lawyer_specialties WHERE service_id=?").get(serviceId)?.count || 0;
+        if (linkedLawyers) return json(res, 409, { error: `این حوزه هنوز برای ${linkedLawyers} وکیل انتخاب شده؛ فعلاً غیرفعالش کن یا اول تخصص وکلا رو تغییر بده.` });
+        if (!db.prepare("DELETE FROM services WHERE id=?").run(serviceId).changes) return json(res, 404, { error: "حوزه تخصصی پیدا نشد" });
         return json(res, 200, { ok: true });
       }
 
@@ -1269,15 +1668,45 @@ const server = createServer(async (req, res) => {
         const allowedSettings = new Set([...publicSettingNames, "site_commission"]);
         if (!allowedSettings.has(key)) return json(res, 400, { error: "کلید تنظیمات مجاز نیست" });
         let value = cleanText(body.value);
-        if (["default_phone_price", "default_in_person_price"].includes(key)) {
+        if (["default_phone_price", "default_in_person_price", "default_text_price"].includes(key) || /^(phone|text|in_person)_price_(min|max)$/.test(key)) {
           const number = Number(value);
           if (!Number.isSafeInteger(number) || number <= 0 || number > 100000000) return json(res, 400, { error: "تعرفه معتبر نیست" });
           value = String(number);
+          const range = /^(phone|text|in_person)_price_(min|max)$/.exec(key);
+          if (range) {
+            const other = settingNumber(`${range[1]}_price_${range[2] === "min" ? "max" : "min"}`, range[2] === "min" ? 100000000 : 1);
+            if (range[2] === "min" ? number > other : number < other) return json(res, 400, { error: "حداقل نرخ نمی‌تونه از حداکثر بیشتر باشه." });
+          }
+        } else if (["free_question_limit", "max_question_lawyers", "text_message_limit"].includes(key)) {
+          const number = Number(value);
+          if (!Number.isSafeInteger(number) || number < 1 || number > 100) return json(res, 400, { error: "یک عدد بین ۱ تا ۱۰۰ وارد کن." });
+          value = String(number);
+        } else if (key === "hero_images") {
+          if (value.length > 4000) return json(res, 400, { error: "فهرست تصاویر اصلی خیلی طولانیه." });
+          let parsed;
+          try { parsed = JSON.parse(value); } catch { return json(res, 400, { error: "فهرست تصاویر اصلی معتبر نیست." }); }
+          if (!Array.isArray(parsed) || parsed.length > 8 || parsed.some((item) => typeof item !== "string")) return json(res, 400, { error: "حداکثر ۸ تصویر معتبر انتخاب کن." });
+          const mediaUrls = [...new Set(parsed.map((item) => cleanText(item)))];
+          if (mediaUrls.some((item) => !isStoredSiteMediaUrl(item))) return json(res, 400, { error: "یکی از تصاویر انتخاب‌شده معتبر نیست." });
+          value = JSON.stringify(mediaUrls);
+        } else if (["logo_light_url", "logo_dark_url", "favicon_url"].includes(key)) {
+          if (value && !isStoredSiteMediaUrl(value)) return json(res, 400, { error: "رسانه انتخاب‌شده معتبر نیست." });
+        } else if (["footer_config", "trust_items", "article_tags", "stat_labels"].includes(key)) {
+          if (value.length > 30000) return json(res, 400, { error: "این محتوا خیلی طولانیه." });
+          let parsed;
+          try { parsed = JSON.parse(value); } catch { return json(res, 400, { error: "ساختار محتوا معتبر نیست." }); }
+          if (["trust_items", "article_tags"].includes(key) && !Array.isArray(parsed) || ["footer_config", "stat_labels"].includes(key) && (!parsed || typeof parsed !== "object" || Array.isArray(parsed))) return json(res, 400, { error: "ساختار محتوا معتبر نیست." });
+          if (key === "article_tags" && (parsed.length > 100 || parsed.some((tag) => typeof tag !== "string" || tag.length < 1 || tag.length > 80))) return json(res, 400, { error: "تگ‌ها باید متن کوتاه باشن." });
+          value = JSON.stringify(parsed);
+        } else if (["terms_content", "privacy_content"].includes(key)) {
+          if (!value || value.length > 50000) return json(res, 400, { error: "متن قوانین باید بین ۱ تا ۵۰۰۰۰ نویسه باشه." });
+        } else if (key === "site_views") {
+          if (!Number.isSafeInteger(Number(value)) || Number(value) < 0) return json(res, 400, { error: "آمار بازدید باید یک عدد مثبت یا صفر باشه." });
         } else if (key === "site_commission") {
           const number = Number(value);
           if (!Number.isFinite(number) || number < 0 || number > 100) return json(res, 400, { error: "درصد کمیسیون باید بین صفر تا صد باشد" });
           value = String(number);
-        } else if (["questions_enabled", "global_in_person_enabled", "maintenance_mode"].includes(key)) {
+        } else if (["questions_enabled", "global_in_person_enabled", "maintenance_mode", "stats_enabled", "trust_enabled"].includes(key)) {
           if (!["0", "1", "true", "false"].includes(value.toLowerCase())) return json(res, 400, { error: "مقدار کلید روشن یا خاموش معتبر نیست" });
           value = ["1", "true"].includes(value.toLowerCase()) ? "1" : "0";
         } else if (!value || value.length > 500) {
@@ -1339,9 +1768,12 @@ const server = createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/api/articles") {
       const body = await readBody(req);
       const user = currentUser(req);
-      if (!user || !hasAdminPermission(user, "content.manage")) return json(res, 403, { error: "مجوز مدیریت محتوا لازم است" });
+      if (!user || user.role !== "lawyer" && !hasAdminPermission(user, "content.manage")) return json(res, 403, { error: "برای نوشتن مقاله وارد حساب وکیل یا مدیر شو." });
       const action = cleanText(body.action || "save");
       const articleId = body.id ? validId(body.id) : null;
+      const existing = articleId ? db.prepare("SELECT * FROM articles WHERE id=?").get(articleId) : null;
+      if (articleId && !existing) return json(res, 404, { error: "مقاله پیدا نشد." });
+      if (existing && user.role === "lawyer" && existing.author_user_id !== user.id) return json(res, 403, { error: "فقط مقاله‌های خودت رو می‌تونی ویرایش کنی." });
       if (action === "delete") {
         if (!articleId || !db.prepare("DELETE FROM articles WHERE id=?").run(articleId).changes) return json(res, 404, { error: "مقاله پیدا نشد" });
         return json(res, 200, { ok: true });
@@ -1350,22 +1782,29 @@ const server = createServer(async (req, res) => {
       const title = validText(body.title, 3, 220);
       const excerpt = validText(body.excerpt, 10, 1000);
       const articleBody = validText(body.body, 20, 30000);
-      const category = validText(body.category, 2, 100);
-      const author = validText(body.author || user.first_name + " " + user.last_name, 2, 160);
-      const publish = body.publish === true || cleanText(body.status) === "published";
+      const author = validText(user.role === "lawyer" ? user.first_name + " " + user.last_name : body.author || user.first_name + " " + user.last_name, 2, 160);
+      const publish = user.role === "admin" && (body.publish === true || cleanText(body.status) === "published");
+      const status = user.role === "lawyer" ? "pending_review" : publish ? "published" : "draft";
+      const tags = body.tags === undefined ? JSON.parse(existing?.tags || "[]") : body.tags;
+      const allowedTags = jsonSetting("article_tags", []);
+      if (!Array.isArray(tags) || tags.length < 1 || tags.length > 20 || tags.some((tag) => typeof tag !== "string" || !allowedTags.includes(tag))) return json(res, 400, { error: "حداقل یک تگ و حداکثر ۲۰ تگ از فهرستی که مدیر تعیین کرده انتخاب کن." });
+      const category = tags[0] || "عمومی";
+      const coverImage = cleanText(body.coverImage ?? body.cover_image ?? existing?.cover_image ?? "");
+      const uploadedCover = /^\/api\/media\/(\d+)$/.exec(coverImage);
+      if (coverImage && (uploadedCover ? !db.prepare("SELECT 1 FROM documents WHERE id=? AND kind='article_cover' AND status='approved' AND (owner_id=? OR ?=1)").get(Number(uploadedCover[1]), user.id, user.role === "admin" ? 1 : 0) : !/^\/blog\/covers\/[a-z0-9-]+\.(webp|png|jpg)$/.test(coverImage))) return json(res, 400, { error: "عکس مقاله رو از بخش بارگذاری انتخاب کن." });
       if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) || slug.length > 160 || !title || !excerpt || !articleBody || !category || !author) return json(res, 400, { error: "عنوان، نشانی انگلیسی، خلاصه و متن معتبر لازم است" });
       try {
         if (articleId) {
-          const changed = db.prepare("UPDATE articles SET slug=?,title=?,excerpt=?,body=?,category=?,author=?,status=?,published_at=? WHERE id=?").run(slug, title, excerpt, articleBody, category, author, publish ? "published" : "draft", publish ? new Date().toISOString() : null, articleId);
+          const changed = db.prepare("UPDATE articles SET slug=?,title=?,excerpt=?,body=?,category=?,author=?,status=?,published_at=?,cover_image=?,tags=? WHERE id=?").run(slug, title, excerpt, articleBody, category, author, status, publish ? new Date().toISOString() : null, coverImage || null, JSON.stringify(tags), articleId);
           if (!changed.changes) return json(res, 404, { error: "مقاله پیدا نشد" });
         } else {
-          db.prepare("INSERT INTO articles(slug,title,excerpt,body,category,author,status,published_at) VALUES(?,?,?,?,?,?,?,?)").run(slug, title, excerpt, articleBody, category, author, publish ? "published" : "draft", publish ? new Date().toISOString() : null);
+          db.prepare("INSERT INTO articles(slug,title,excerpt,body,category,author,status,published_at,cover_image,tags,author_user_id,author_avatar) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(slug, title, excerpt, articleBody, category, author, status, publish ? new Date().toISOString() : null, coverImage || null, JSON.stringify(tags), user.id, accountFor(user.id).avatar_url);
         }
       } catch (error) {
         if (String(error.message).includes("UNIQUE")) return json(res, 409, { error: "نشانی انگلیسی مقاله تکراری است" });
         throw error;
       }
-      return json(res, 200, { ok: true });
+      return json(res, 200, { ok: true, status });
     }
 
     return json(res, 404, { error: "مسیر API پیدا نشد" });

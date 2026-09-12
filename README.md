@@ -7,19 +7,28 @@ The project runs entirely on your machine. It does not require a hosted backend,
 ## Highlights
 
 - Persian, right-to-left interface using the local Sahel font family
-- Responsive public website and role-specific dashboards
+- Responsive public website and role-specific dashboards with persistent light and dark themes
 - Exact primary brand colors: `#1A237E` and `#EFBF04`
+- Live public statistics, configurable trust content, and an administrator-managed footer
 - Public lawyer directory with search, filtering, sorting, profiles, availability, and bookmarks
-- Free legal questions with optional anonymous publication consent
-- Assignment of one question to multiple authorized lawyers
-- Separate lawyer answers with administrator-controlled publication
-- Phone and in-person consultation booking with server-side pricing
+- Administrator-defined specialty catalog with multi-specialty lawyer profiles and exact directory filtering
+- Interactive specialty cards with editable back-side case examples and links to matching lawyers
+- Uploadable light/dark logo variants, browser favicon, and an ordered multi-image home hero
+- Three free legal questions per client by default, with optional anonymous publication consent
+- Automatic assignment to top verified lawyers and an administrator-configurable answer limit
+- Separate lawyer answers shown to the client as soon as each one arrives, with administrator-controlled public publication
+- Paid text consultations with separate, configurable conversation-turn quotas for clients and lawyers
+- Support-coordinated phone consultations and slot-based in-person booking
 - Atomic appointment-slot reservation to prevent double booking
 - Simulated local checkout, payment tracking, cancellation, and refund states
-- Secure client-lawyer consultation rooms and persisted chat messages
-- Protected document upload and download with file type and size validation
+- Secure text-consultation rooms, persisted chat messages, consultation-specific attachments, and visible tracking codes
+- Protected in-chat document upload and download with file type and size validation
+- One-click rebooking after completion for text, phone, or in-person consultation with the same lawyer
+- Client avatars, lawyer onboarding documents, and administrator verification
 - Verified-consultation review flow with administrator moderation
-- Searchable legal questions, reviews, and legal magazine articles
+- Searchable legal questions, reviews, and legal magazine articles with cover images and controlled tags
+- Lawyer article submissions with administrator approval before publication
+- Role-aware notifications and navigation badges in all three dashboards
 - Administration of users, lawyers, verification, consultations, payments, content, services, FAQs, reviews, support, reports, permissions, and site settings
 - Granular administrator capabilities with an immutable primary administrator
 - Seeded data and three ready-to-use demo accounts
@@ -87,23 +96,34 @@ Use each account to inspect its separate navigation, permissions, data, and work
 
 ### Free legal question
 
-1. A client selects a legal topic and describes the issue.
+1. A client selects a legal topic and describes the issue. Each account has three free questions by default.
 2. The client can upload a supporting PDF, JPG, or PNG file.
 3. The client decides whether an anonymized version may be published.
-4. A direct question is sent only to the selected lawyer. An unassigned question waits for administrator assignment.
-5. An administrator assigns up to five relevant lawyers.
-6. Authorized lawyers answer from their dashboards.
-7. Every answer appears privately in the client's dashboard. Public display requires client consent and administrator publication.
+4. A direct question goes to the selected lawyer. Otherwise, it is automatically assigned to the highest-ranked verified lawyers.
+5. An administrator can reassign the question, up to the configurable maximum number of lawyers.
+6. Authorized lawyers answer once from their dashboards and can immediately access attachments inside that question's chat thread.
+7. Each answer appears privately in the client's chat as soon as it arrives; the client never has to wait for all assigned lawyers. Public display still requires client consent.
+8. After an answer is received, the client can continue with that lawyer through a paid text consultation.
 
-Text questions are free in the current product version.
+An authorized administrator can also cancel a free question as a whole. Cancellation closes its active assignments and notifies the client and assigned lawyers. The default maximum is three lawyer answers per question, and the administrator can change both this limit and the per-client free-question quota.
+
+### Paid text consultation
+
+1. A client continues from a lawyer's free answer.
+2. The server creates a priced text consultation linked to the original question.
+3. After the simulated checkout, a private conversation is opened.
+4. The client and lawyer can each use three conversation turns by default. Multiple consecutive messages from the same person count as one turn.
+5. The conversation closes after both participants use their turn quotas; the administrator can change the quota for future consultations.
 
 ### Phone consultation
 
-1. The client selects a lawyer, topic, date, and time.
+1. The client selects a lawyer and describes the topic; no date or time is requested from the client.
 2. The API validates the lawyer and computes the price from the stored server-side tariff.
-3. The client accepts the consultation terms.
-4. The local payment is recorded as simulated and a tracking code is created.
-5. The consultation becomes visible to the client, lawyer, and authorized administrators.
+3. The local payment is recorded as simulated and a tracking code is created.
+4. The client receives a notification that support will call to coordinate the appointment.
+5. A lawyer records private phone availability, visible only to authorized administrators.
+6. An administrator selects an available slot, and the confirmed time then appears in the client's and lawyer's dashboards.
+7. Phone requests and their attachments remain on the consultation record and never create a text chat room.
 
 ### In-person consultation
 
@@ -114,7 +134,7 @@ Text questions are free in the current product version.
 
 ### Consultation lifecycle
 
-The platform supports registration, acceptance or rejection, an active consultation room, completion, cancellation, review eligibility, and administrative follow-up. Chat messages and protected documents remain associated with the relevant consultation.
+The platform supports payment, assignment, support coordination, acceptance or rejection, an active consultation room, completion, cancellation, review eligibility, and administrative follow-up. Dashboard progress indicators expose the current stage, tracking codes link consultations to their payments, and protected files stay inside the relevant chat. After completion, the client can immediately book another text, phone, or in-person consultation with the same lawyer.
 
 ## Dashboards
 
@@ -129,7 +149,7 @@ The platform supports registration, acceptance or rejection, an active consultat
 - Free questions and lawyer answers
 - Bookmarked lawyers
 - Support requests and complaints
-- Editable personal profile
+- Editable personal profile with avatar upload
 
 ### Lawyer dashboard
 
@@ -142,7 +162,9 @@ The platform supports registration, acceptance or rejection, an active consultat
 - Assigned legal questions and answers
 - Revenue and commission summary
 - Reviews and performance metrics
-- Professional profile and verification documents
+- Professional profile, service pricing within administrator-defined ranges, and verification documents
+- Phone and in-person availability management
+- Article writing and submission for administrator review
 
 ### Administrator dashboard
 
@@ -154,10 +176,11 @@ The platform supports registration, acceptance or rejection, an active consultat
 - Consultation lifecycle management
 - Protected document moderation
 - Orders, commissions, refunds, and financial reporting
-- Article, FAQ, and service management
+- Article, FAQ, and specialty-card management
+- Article tag management, cover uploads, drafts, and lawyer-submission approval
 - Review moderation
 - Support and complaint handling
-- Reports and platform settings
+- Reports, consultation price ranges, quotas, legal text, trust content, public statistics, full footer settings, and brand media
 - Administrator creation and granular permission management
 - Direct link to view the public website
 
@@ -169,9 +192,9 @@ The application stores its local data in:
 data/dadrah.sqlite
 ```
 
-The schema contains 20 related tables covering:
+The schema contains 21 related tables covering:
 
-- users, lawyers, sessions, and administrator permissions
+- users, lawyers, lawyer specialties, sessions, and administrator permissions
 - questions, question assignments, and answers
 - appointment slots, consultations, orders, and reviews
 - bookmarks, documents, conversations, and chat messages

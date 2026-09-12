@@ -23,6 +23,7 @@ export const users = sqliteTable(
     lastName: text("last_name").notNull(),
     email: text("email").notNull().unique(),
     phone: text("phone").notNull(),
+    avatarUrl: text("avatar_url"),
     province: text("province"),
     city: text("city"),
     status: text("status").notNull().default("active"),
@@ -50,6 +51,7 @@ export const lawyers = sqliteTable("lawyers", {
   inPersonPrice: integer("in_person_price"),
   rating: real("rating").notNull().default(0),
   verified: integer("verified").notNull().default(0),
+  profileCompleted: integer("profile_completed").notNull().default(0),
   featured: integer("featured").notNull().default(0),
   online: integer("online").notNull().default(0),
   inPersonEnabled: integer("in_person_enabled").notNull().default(0),
@@ -133,8 +135,11 @@ export const consultations = sqliteTable(
     clientId: integer("client_id").references(() => users.id),
     lawyerId: integer("lawyer_id").references(() => lawyers.id),
     slotId: integer("slot_id").references(() => appointmentSlots.id),
+    sourceQuestionId: integer("source_question_id").references(() => questions.id),
+    messageLimit: integer("message_limit").notNull().default(3),
     type: text("type").notNull(),
     topic: text("topic").notNull(),
+    description: text("description"),
     scheduledAt: text("scheduled_at"),
     amount: integer("amount").notNull().default(0),
     paymentStatus: text("payment_status")
@@ -147,6 +152,8 @@ export const consultations = sqliteTable(
   (table) => [
     index("consultations_client_idx").on(table.clientId),
     index("consultations_lawyer_idx").on(table.lawyerId),
+    index("consultations_source_question_idx").on(table.sourceQuestionId),
+    check("consultations_message_limit_check", sql`${table.messageLimit} > 0`),
     uniqueIndex("consultations_slot_unique_idx")
       .on(table.slotId)
       .where(sql`${table.slotId} IS NOT NULL`),
@@ -224,22 +231,46 @@ export const articles = sqliteTable("articles", {
   body: text("body").notNull(),
   category: text("category").notNull(),
   author: text("author").notNull(),
+  authorUserId: integer("author_user_id").references(() => users.id),
   coverImage: text("cover_image"),
   tags: text("tags").notNull().default("[]"),
   authorAvatar: text("author_avatar"),
   status: text("status").notNull().default("draft"),
   publishedAt: text("published_at"),
   createdAt: text("created_at").notNull().default(currentTimestamp),
-});
+}, (table) => [index("articles_author_status_idx").on(table.authorUserId, table.status)]);
 
 export const services = sqliteTable("services", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   title: text("title").notNull().unique(),
   description: text("description").notNull(),
+  backDescription: text("back_description").notNull().default(""),
+  caseTypes: text("case_types").notNull().default("[]"),
   icon: text("icon").notNull(),
   active: integer("active").notNull().default(1),
   sortOrder: integer("sort_order").notNull().default(0),
 });
+
+export const lawyerSpecialties = sqliteTable(
+  "lawyer_specialties",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    lawyerId: integer("lawyer_id")
+      .notNull()
+      .references(() => lawyers.id, { onDelete: "cascade" }),
+    serviceId: integer("service_id")
+      .notNull()
+      .references(() => services.id, { onDelete: "restrict" }),
+    createdAt: text("created_at").notNull().default(currentTimestamp),
+  },
+  (table) => [
+    uniqueIndex("lawyer_specialties_lawyer_service_unique").on(
+      table.lawyerId,
+      table.serviceId,
+    ),
+    index("lawyer_specialties_service_idx").on(table.serviceId),
+  ],
+);
 
 export const faqs = sqliteTable("faqs", {
   id: integer("id").primaryKey({ autoIncrement: true }),

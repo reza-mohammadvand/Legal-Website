@@ -23,7 +23,9 @@ export function verifyPassword(password, stored) {
 
 function ensureColumn(table, column, definition) {
   const columns = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((item) => item.name));
-  if (!columns.has(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  if (columns.has(column)) return false;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  return true;
 }
 
 function installSchema() {
@@ -37,6 +39,7 @@ function installSchema() {
       last_name TEXT NOT NULL,
       email TEXT NOT NULL UNIQUE,
       phone TEXT NOT NULL,
+      avatar_url TEXT,
       province TEXT,
       city TEXT,
       status TEXT NOT NULL DEFAULT 'active',
@@ -53,6 +56,7 @@ function installSchema() {
       in_person_price INTEGER,
       rating REAL NOT NULL DEFAULT 0,
       verified INTEGER NOT NULL DEFAULT 0,
+      profile_completed INTEGER NOT NULL DEFAULT 0,
       featured INTEGER NOT NULL DEFAULT 0,
       online INTEGER NOT NULL DEFAULT 0,
       in_person_enabled INTEGER NOT NULL DEFAULT 0
@@ -99,8 +103,11 @@ function installSchema() {
       client_id INTEGER REFERENCES users(id),
       lawyer_id INTEGER REFERENCES lawyers(id),
       slot_id INTEGER REFERENCES appointment_slots(id),
+      source_question_id INTEGER REFERENCES questions(id),
+      message_limit INTEGER NOT NULL DEFAULT 3 CHECK(message_limit > 0),
       type TEXT NOT NULL,
       topic TEXT NOT NULL,
+      description TEXT,
       scheduled_at TEXT,
       amount INTEGER NOT NULL DEFAULT 0,
       payment_status TEXT NOT NULL DEFAULT 'simulated_paid',
@@ -149,6 +156,7 @@ function installSchema() {
       body TEXT NOT NULL,
       category TEXT NOT NULL,
       author TEXT NOT NULL,
+      author_user_id INTEGER REFERENCES users(id),
       cover_image TEXT,
       tags TEXT NOT NULL DEFAULT '[]',
       author_avatar TEXT,
@@ -160,9 +168,18 @@ function installSchema() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT NOT NULL UNIQUE,
       description TEXT NOT NULL,
+      back_description TEXT NOT NULL DEFAULT '',
+      case_types TEXT NOT NULL DEFAULT '[]',
       icon TEXT NOT NULL,
       active INTEGER NOT NULL DEFAULT 1,
       sort_order INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS lawyer_specialties (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      lawyer_id INTEGER NOT NULL REFERENCES lawyers(id) ON DELETE CASCADE,
+      service_id INTEGER NOT NULL REFERENCES services(id) ON DELETE RESTRICT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(lawyer_id, service_id)
     );
     CREATE TABLE IF NOT EXISTS faqs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -234,10 +251,17 @@ function installSchema() {
     );
   `);
 
+  ensureColumn("users", "avatar_url", "TEXT");
+  if (ensureColumn("lawyers", "profile_completed", "INTEGER NOT NULL DEFAULT 0")) {
+    db.exec("UPDATE lawyers SET profile_completed=1 WHERE verified=1");
+  }
   ensureColumn("questions", "urgent", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn("appointment_slots", "consultation_type", "TEXT NOT NULL DEFAULT 'phone'");
   ensureColumn("consultations", "slot_id", "INTEGER REFERENCES appointment_slots(id)");
   ensureColumn("consultations", "completed_at", "TEXT");
+  ensureColumn("consultations", "source_question_id", "INTEGER REFERENCES questions(id)");
+  ensureColumn("consultations", "message_limit", "INTEGER NOT NULL DEFAULT 3 CHECK(message_limit > 0)");
+  ensureColumn("consultations", "description", "TEXT");
   ensureColumn("orders", "type", "TEXT NOT NULL DEFAULT 'phone'");
   ensureColumn("orders", "commission_rate", "REAL NOT NULL DEFAULT 0");
   ensureColumn("orders", "commission_amount", "INTEGER NOT NULL DEFAULT 0");
@@ -255,6 +279,9 @@ function installSchema() {
   ensureColumn("articles", "cover_image", "TEXT");
   ensureColumn("articles", "tags", "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn("articles", "author_avatar", "TEXT");
+  ensureColumn("articles", "author_user_id", "INTEGER REFERENCES users(id)");
+  ensureColumn("services", "back_description", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn("services", "case_types", "TEXT NOT NULL DEFAULT '[]'");
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS questions_status_idx ON questions(status);
@@ -262,6 +289,10 @@ function installSchema() {
     CREATE INDEX IF NOT EXISTS question_assignments_question_idx ON question_assignments(question_id);
     CREATE INDEX IF NOT EXISTS consultations_client_idx ON consultations(client_id);
     CREATE INDEX IF NOT EXISTS consultations_lawyer_idx ON consultations(lawyer_id);
+    CREATE INDEX IF NOT EXISTS consultations_source_question_idx ON consultations(source_question_id);
+    CREATE INDEX IF NOT EXISTS articles_author_status_idx ON articles(author_user_id, status);
+    CREATE UNIQUE INDEX IF NOT EXISTS lawyer_specialties_lawyer_service_unique ON lawyer_specialties(lawyer_id, service_id);
+    CREATE INDEX IF NOT EXISTS lawyer_specialties_service_idx ON lawyer_specialties(service_id);
     CREATE UNIQUE INDEX IF NOT EXISTS consultations_slot_unique_idx ON consultations(slot_id) WHERE slot_id IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS reviews_consultation_unique_idx ON reviews(consultation_id) WHERE consultation_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS appointment_slots_lawyer_idx ON appointment_slots(lawyer_id, starts_at);
@@ -300,7 +331,7 @@ function addSeedUsers() {
 }
 
 function addSeedLawyers() {
-  const addLawyer = db.prepare("INSERT OR IGNORE INTO lawyers (id,user_id,license_number,specialties,bio,phone_price,text_price,in_person_price,rating,verified,featured,online,in_person_enabled) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  const addLawyer = db.prepare("INSERT OR IGNORE INTO lawyers (id,user_id,license_number,specialties,bio,phone_price,text_price,in_person_price,rating,verified,featured,online,in_person_enabled,profile_completed) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
   [
     [1, "lawyer", "23456", "خانواده و طلاق", "وکیل پایه یک دادگستری با تمرکز بر پرونده‌های خانواده و ۱۲ سال سابقه حرفه‌ای", 480000, 850000, 4.9, 1, 1],
     [2, "lawyer2", "19874", "دعاوی کیفری", "متخصص دفاع کیفری و پیگیری پرونده از تحقیقات مقدماتی تا دادگاه", 550000, 900000, 4.8, 1, 1],
@@ -310,11 +341,11 @@ function addSeedLawyers() {
     [6, "lawyer6", "22701", "کار و تأمین اجتماعی", "مشاور روابط کار، مطالبات مزدی، بیمه و اختلافات کارگر و کارفرما", 450000, 760000, 4.8, 0, 1],
   ].forEach(([id, username, license, specialties, bio, phonePrice, inPersonPrice, rating, featured, online]) => {
     const user = db.prepare("SELECT id FROM users WHERE username=?").get(username);
-    if (user) addLawyer.run(id, user.id, license, specialties, bio, phonePrice, 0, inPersonPrice, rating, 1, featured, online, 1);
+    if (user) addLawyer.run(id, user.id, license, specialties, bio, phonePrice, 250000, inPersonPrice, rating, 1, featured, online, 1, 1);
   });
   const pendingUser = db.prepare("SELECT id FROM users WHERE username='lawyer.pending'").get();
   if (pendingUser) {
-    addLawyer.run(7, pendingUser.id, "در انتظار بررسی ۴۴۷۱۰", "حقوق مالیاتی", "پروفایل تازه ثبت شده و در انتظار بررسی مدارک و شماره پروانه توسط مدیر سامانه است.", 440000, 0, 800000, 0, 0, 0, 0, 0);
+    addLawyer.run(7, pendingUser.id, "در انتظار بررسی ۴۴۷۱۰", "حقوق مالیاتی", "پروفایل تازه ثبت شده و در انتظار بررسی مدارک و شماره پروانه توسط مدیر سامانه است.", 440000, 250000, 800000, 0, 0, 0, 0, 0, 0);
   }
 }
 
@@ -337,22 +368,59 @@ function addSeedContent() {
     hydrateArticleMedia.run(article[6], article[7], article[8], article[0]);
   });
 
-  const addService = db.prepare("INSERT OR IGNORE INTO services(title,description,icon,sort_order) VALUES(?,?,?,?)");
-  [
-    ["دعاوی کیفری", "دفاع و پیگیری تخصصی در دادسرا و دادگاه", "shield", 1],
-    ["خانواده و طلاق", "مهریه، حضانت، نفقه و اختلافات خانوادگی", "heart", 2],
-    ["دعاوی ملکی", "سند، سرقفلی، اجاره و مشارکت در ساخت", "building", 3],
-    ["قرارداد و تجارت", "تنظیم و بررسی قراردادها و اختلاف شرکا", "briefcase", 4],
-    ["چک و اسناد", "چک، سفته، مطالبات و ضمانت‌ها", "file-check", 5],
-    ["ارث و ثبت", "انحصار وراثت، تقسیم ترکه و امور ثبتی", "landmark", 6],
-  ].forEach((item) => addService.run(...item));
+  if (!db.prepare("SELECT 1 FROM settings WHERE key='specialty_catalog_seed_v1'").get()) {
+    const addService = db.prepare("INSERT OR IGNORE INTO services(title,description,back_description,case_types,icon,sort_order) VALUES(?,?,?,?,?,?)");
+    const hydrateService = db.prepare(`
+      UPDATE services
+      SET back_description=CASE WHEN trim(back_description)='' THEN ? ELSE back_description END,
+          case_types=CASE WHEN case_types IS NULL OR case_types='' OR case_types='[]' THEN ? ELSE case_types END
+      WHERE title=?
+    `);
+    [
+    ["دعاوی کیفری", "دفاع و پیگیری تخصصی در دادسرا و دادگاه", "برای پرونده‌هایی که پای شکایت، دفاع یا تحقیقات کیفری وسطه، وکیل متخصص مسیر درست رو از همون قدم اول روشن می‌کنه.", ["کلاهبرداری و خیانت در امانت", "جرایم رایانه‌ای", "ضرب‌وجرح و تهدید", "دفاع در دادسرا و دادگاه"], "shield", 1],
+    ["خانواده و طلاق", "مهریه، حضانت، نفقه و اختلافات خانوادگی", "مسائل خانوادگی هم حساسن و هم پرجزئیات؛ وکیل این حوزه کمک می‌کنه با آرامش و شناخت حق‌وحقوقت تصمیم بگیری.", ["مهریه و نفقه", "طلاق توافقی و یک‌طرفه", "حضانت و ملاقات فرزند", "تمکین و اجرت‌المثل"], "heart", 2],
+    ["دعاوی ملکی", "سند، سرقفلی، اجاره و مشارکت در ساخت", "از اختلاف بر سر سند تا قرارداد ساخت، بررسی دقیق مدارک ملکی می‌تونه جلوی زمان و هزینه اضافه رو بگیره.", ["الزام به تنظیم سند", "خلع ید و تصرف عدوانی", "سرقفلی و اجاره", "مشارکت در ساخت"], "building", 3],
+    ["قرارداد و تجارت", "تنظیم و بررسی قراردادها و اختلاف شرکا", "قبل از امضا یا وقتی اختلافی پیش اومده، یک نگاه تخصصی به قرارداد کمک می‌کنه ریسک‌ها و راه‌حل‌ها روشن بشن.", ["تنظیم و بازبینی قرارداد", "اختلاف شرکا", "ثبت و تغییرات شرکت", "فسخ و مطالبه خسارت"], "briefcase", 4],
+    ["چک و اسناد", "چک، سفته، مطالبات و ضمانت‌ها", "برای وصول طلب یا دفاع در برابر یک سند تجاری، زمان اقدام و انتخاب مسیر حقوقی یا کیفری خیلی مهمه.", ["چک برگشتی", "سفته و ضمانت", "مطالبه وجه", "اعسار و تقسیط"], "file-check", 5],
+    ["ارث و ثبت", "انحصار وراثت، تقسیم ترکه و امور ثبتی", "تقسیم دارایی و کارهای ثبتی وقتی ساده‌تر می‌شه که مدارک، سهم‌ها و ترتیب اقدام از اول دقیق بررسی بشن.", ["انحصار وراثت", "تقسیم و فروش ترکه", "وصیت و ارث", "اصلاح و ابطال اسناد"], "landmark", 6],
+    ["کار و بیمه", "حقوق معوقه، اخراج، بیمه و قرارداد کار", "وکیل کار و بیمه کمک می‌کنه حق کارگر یا کارفرما با توجه به قرارداد، سابقه و مدارک درست پیگیری بشه.", ["حقوق و مزایای معوقه", "اخراج و بازگشت به کار", "بیمه و سابقه تأمین اجتماعی", "اختلاف قرارداد کار"], "users", 7],
+    ["جرایم رایانه‌ای", "کلاهبرداری اینترنتی، دسترسی غیرمجاز و نشر اکاذیب", "در پرونده‌های فضای مجازی حفظ سریع ادله دیجیتال مهمه؛ وکیل متخصص راه شکایت و پیگیری فنی رو هماهنگ می‌کنه.", ["کلاهبرداری اینترنتی", "دسترسی غیرمجاز", "مزاحمت و تهدید آنلاین", "نشر اکاذیب در فضای مجازی"], "monitor", 8],
+    ["مالیات و امور مالی", "اعتراض مالیاتی، جرایم و اختلافات مالی", "برای اعتراض به برگ تشخیص یا حل اختلاف مالی، بررسی مهلت‌ها و اسناد حسابداری قبل از اقدام ضروریه.", ["اعتراض به برگ تشخیص", "هیأت حل اختلاف مالیاتی", "جرایم و بخشودگی", "قراردادها و تکالیف مالیاتی"], "scale", 9],
+    ].forEach(([title, description, backDescription, caseTypes, icon, sortOrder]) => {
+      addService.run(title, description, backDescription, JSON.stringify(caseTypes), icon, sortOrder);
+      hydrateService.run(backDescription, JSON.stringify(caseTypes), title);
+    });
+    db.prepare("INSERT INTO settings(key,value) VALUES('specialty_catalog_seed_v1','1')").run();
+  }
 
-  const addFaq = db.prepare("INSERT OR IGNORE INTO faqs(category,question,answer,sort_order) SELECT ?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM faqs WHERE question=?)");
-  [
-    ["اعتماد", "آیا اطلاعات و مدارک من محرمانه می‌ماند؟", "بله. اطلاعات فقط در اختیار وکیل مرتبط و مدیران مجاز قرار می‌گیرد و بدون رضایت شما منتشر نمی‌شود.", 1],
-    ["انتخاب وکیل", "اگر ندانم کدام وکیل مناسب است چه کنم؟", "موضوع را رایگان ثبت کنید تا مدیر پرونده آن را به چند وکیل مرتبط ارجاع دهد.", 2],
-    ["مشاوره", "مشاوره تلفنی چقدر طول می‌کشد؟", "هر جلسه حداکثر ۳۰ دقیقه است و زمان تماس در درخواست شما ثبت می‌شود.", 3],
-  ].forEach((item) => addFaq.run(...item, item[1]));
+  if (!db.prepare("SELECT 1 FROM settings WHERE key='faq_seed_v2'").get()) {
+    const originalFaqs = [
+      ["آیا اطلاعات و مدارک من محرمانه می‌ماند؟", "بله. اطلاعات فقط در اختیار وکیل مرتبط و مدیران مجاز قرار می‌گیرد و بدون رضایت شما منتشر نمی‌شود."],
+      ["اگر ندانم کدام وکیل مناسب است چه کنم؟", "موضوع را رایگان ثبت کنید تا مدیر پرونده آن را به چند وکیل مرتبط ارجاع دهد."],
+      ["مشاوره تلفنی چقدر طول می‌کشد؟", "هر جلسه حداکثر ۳۰ دقیقه است و زمان تماس در درخواست شما ثبت می‌شود."],
+    ];
+    const faqSeeds = [
+      ["اعتماد", "خیالم از بابت اطلاعات و مدارکم راحت باشه؟", "آره؛ مدارکت فقط به وکیل‌های مرتبط با درخواستت و مدیرهای مجاز نمایش داده می‌شه. متن سؤال و جواب هم فقط با اجازه خودت عمومی می‌شه."],
+      ["انتخاب وکیل", "نمی‌دونم کدوم وکیل رو انتخاب کنم؛ از کجا شروع کنم؟", "پرسشت رو رایگان بنویس. ما خودکار برای وکیل‌های برتر می‌فرستیمش تا راهنماییت کنن؛ تیم پشتیبانی هم می‌تونه مستقیم به وکیل مناسب ارجاعش بده."],
+      ["مشاوره", "برای مشاوره تلفنی چطور زمان هماهنگ می‌شه؟", "درخواستت رو ثبت کن؛ پشتیبانی باهات تماس می‌گیره و زمان مناسب رو هماهنگ می‌کنه. بعدش روز و ساعت تماس رو توی پنلت می‌بینی."],
+      ["پرسش رایگان", "چند تا پرسش رایگان می‌تونم بپرسم؟", "سهمیه پیش‌فرض هر حساب سه پرسشه. تعداد باقی‌مونده رو موقع ثبت سؤال می‌بینی؛ ممکنه مدیر سایت این سهمیه رو تغییر بده."],
+      ["پرسش رایگان", "چند وکیل به سؤال رایگانم جواب می‌دن؟", "به‌صورت پیش‌فرض حداکثر سه وکیل می‌تونن جواب بدن. این تعداد رو مدیر مشخص می‌کنه تا جواب‌ها مرتب و قابل پیگیری بمونن."],
+      ["مشاوره", "بعد از جواب رایگان، چطور بیشتر صحبت کنیم؟", "از کنار جواب روی ادامه مشاوره بزن. می‌تونی مشاوره متنی، تلفنی یا حضوری بگیری و مسیر گفت‌وگو رو ادامه بدی."],
+      ["مشاوره", "توی مشاوره متنی چند پیام می‌تونیم بفرستیم؟", "بسته پیش‌فرض برای تو و وکیل هر کدوم سه پیامه. تعداد دقیق بسته قبل از پرداخت و داخل گفت‌وگو مشخصه؛ بعد از تموم شدنش می‌تونی مشاوره رو تمدید کنی."],
+      ["مدارک", "مدرکی که فرستادم کی به دست وکیل می‌رسه؟", "وقتی مدرک رو به پرسش یا مشاوره وصل کنی، همون موقع در دسترس وکیل مرتبط قرار می‌گیره و منتظر تأیید مدیر نمی‌مونه."],
+      ["حساب کاربری", "رمزم یادم رفته؛ حالا چی کار کنم؟", "از صفحه ورود، فراموشی رمز رو انتخاب کن و شماره موبایلت رو بنویس. راه بازیابی و وضعیت درخواست همون‌جا بهت گفته می‌شه."],
+      ["انتخاب وکیل", "از کجا بفهمم وکیل برای موضوع من مناسبه؟", "تخصص‌ها، معرفی، نظر موکل‌ها و هزینه خدمات رو توی پروفایل هر وکیل ببین. هنوز مطمئن نیستی؟ یه پرسش رایگان ثبت کن تا راهنماییت کنیم."],
+      ["پشتیبانی", "برای پشتیبانی از کجا پیام بدم؟", "از تماس با ما یا بخش پشتیبانی پنلت پیام بده. تیم ما پیامت رو توی پنل مدیریت می‌بینه و پاسخ پیام‌های حساب کاربری رو می‌تونی توی پنلت دنبال کنی."],
+      ["همکاری وکیل", "وکیلم؛ چطور همکاری رو شروع کنم؟", "با نقش وکیل ثبت‌نام کن، پروفایلت رو کامل کن و مدارک هویتی و پروانه‌ات رو بفرست. مدیر مدارکت رو بررسی می‌کنه و نتیجه توی پنلت بهت اطلاع داده می‌شه."],
+    ];
+    const addFaq = db.prepare("INSERT INTO faqs(category,question,answer,sort_order) SELECT ?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM faqs WHERE question=?)");
+    // Refresh only untouched legacy seed copy; administrator edits remain intact.
+    originalFaqs.forEach(([question, answer], index) => {
+      db.prepare("UPDATE faqs SET category=?,question=?,answer=? WHERE question=? AND answer=?").run(...faqSeeds[index], question, answer);
+    });
+    faqSeeds.forEach((item, index) => addFaq.run(...item, index + 1, item[1]));
+    db.prepare("INSERT INTO settings(key,value) VALUES('faq_seed_v2','1')").run();
+  }
 }
 
 function addSeedSettings() {
@@ -362,6 +430,40 @@ function addSeedSettings() {
   [
     ["site_name", "دادراه"], ["site_commission", "15"],
     ["default_phone_price", "480000"], ["default_in_person_price", "850000"],
+    ["default_text_price", "250000"],
+    ["site_views", "12480"], ["max_question_lawyers", "3"],
+    ["free_question_limit", "3"], ["text_message_limit", "3"],
+    ["phone_price_min", "100000"], ["phone_price_max", "2000000"],
+    ["in_person_price_min", "200000"], ["in_person_price_max", "5000000"],
+    ["text_price_min", "50000"], ["text_price_max", "1000000"],
+    ["stats_enabled", "1"], ["stats_title", "هر روز، کنار آدم‌های بیشتری هستیم"],
+    ["stats_views_label", "بار به دادراه سر زدید"],
+    ["stats_consultations_label", "مشاوره ثبت کردید"],
+    ["stats_reviews_label", "نظر و امتیاز شما"], ["stats_lawyers_label", "وکیل همراه شما"],
+    ["trust_enabled", "1"],
+    ["trust_items", JSON.stringify([
+      { title: "حریم خصوصیت برامون مهمه", description: "مدارک و حرف‌هات فقط پیش آدم‌های مرتبط با درخواستت می‌مونه.", icon: "shield" },
+      { title: "با خیال راحت انتخاب کن", description: "تخصص، هزینه و نظر بقیه رو ببین و بعد وکیلت رو انتخاب کن.", icon: "badge-check" },
+      { title: "توی مسیر تنهات نمی‌ذاریم", description: "از اولین سؤال تا هماهنگی مشاوره، پشتیبانی کنارت هست.", icon: "headphones" },
+    ])],
+    ["article_tags", JSON.stringify(["خانواده", "مهریه", "قرارداد", "ملک", "کسب‌وکار", "ارث", "کیفری", "حقوق کار", "اجرای ثبت", "حل اختلاف", "استعلام", "خرید امن"])],
+    ["logo_light_url", ""], ["logo_dark_url", ""], ["favicon_url", ""],
+    ["hero_images", "[]"],
+    ["terms_content", "با ثبت‌نام، اطلاعات درست و شماره موبایل در دسترس خودت رو وارد کن.\n\nپرسش رایگان برای راهنمایی اولیه است. سهمیه پرسش‌ها، تعداد پاسخ‌دهنده‌ها و تعداد پیام‌های بسته متنی قبل از شروع بهت نمایش داده می‌شه.\n\nهزینه و شرایط هر خدمت رو قبل از پرداخت ببین. زمان تماس تلفنی با کمک پشتیبانی هماهنگ می‌شه و زمان مشاوره حضوری رو از نوبت‌های آزاد انتخاب می‌کنی.\n\nگفت‌وگو رو محترمانه نگه داریم. مدارکی رو بارگذاری کن که اجازه استفاده ازشون رو داری.\n\nبرای پیگیری، تغییر زمان یا درخواست بررسی پرداخت، از بخش پشتیبانی پنلت پیام بده. نتیجه هر پرونده به شرایط و مدارکش بستگی داره و دریافت مشاوره تضمین نتیجه نیست."],
+    ["privacy_content", "اطلاعات حساب و شماره موبایلت برای ارائه خدمات و هماهنگی مشاوره استفاده می‌شه.\n\nمدارک متصل به پرسش یا مشاوره در دسترس وکیل‌های مرتبط و مدیرهای مجاز قرار می‌گیره. مدارک هویتی وکیل برای بررسی صلاحیت در اختیار مدیر مجاز است.\n\nسؤال و پاسخ تو بدون اجازه انتشار خودت در سایت عمومی نمایش داده نمی‌شه. اطلاعات ورودت رو با کسی به اشتراک نذار.\n\nبرای اصلاح اطلاعات یا درخواست بررسی حریم خصوصی، از تماس با ما یا پشتیبانی پنلت با ما در ارتباط باش."],
+    ["footer_config", JSON.stringify({
+      description: "دادراه کنارته تا سؤال حقوقیت رو راحت بپرسی، وکیل مناسب رو پیدا کنی و با خیال روشن‌تری قدم بعدی رو برداری.",
+      copyright: "همه حقوق این سایت برای دادراه محفوظ است.",
+      working_hours: "شنبه تا پنجشنبه، ۹ صبح تا ۶ عصر",
+      contact_title: "با هم در تماس باشیم",
+      columns: [
+        { title: "از اینجا شروع کن", links: [{ label: "پرسش رایگان", href: "/ask" }, { label: "همه وکلا", href: "/lawyers" }, { label: "پرسش و پاسخ‌ها", href: "/questions" }] },
+        { title: "بیشتر با ما آشنا شو", links: [{ label: "درباره ما", href: "/about" }, { label: "تماس با ما", href: "/contact" }, { label: "وبلاگ", href: "/blog" }, { label: "سؤال‌های پرتکرار", href: "/faq" }] },
+        { title: "با خیال راحت", links: [{ label: "قوانین و مقررات", href: "/terms" }, { label: "حریم خصوصی", href: "/privacy" }, { label: "نظر موکل‌ها", href: "/reviews" }] },
+      ],
+      social_links: [],
+      license_labels: ["همراهی حقوقی، با احترام به حریم خصوصی", "پشتیبانی پاسخ‌گو"],
+    })],
     ["support_phone", "02191092020"], ["support_email", "support@dadrah.ir"],
     ["support_address", "تهران، میدان ونک"], ["questions_enabled", "1"],
     ["global_in_person_enabled", "1"], ["maintenance_mode", "0"],
@@ -394,9 +496,6 @@ function addSeedWorkflow() {
     const rate = Number(db.prepare("SELECT value FROM settings WHERE key='site_commission'").get()?.value || 15);
     const commission = Math.round(lawyer.phone_price * rate / 100);
     db.prepare("INSERT INTO orders(client_id,consultation_id,type,amount,commission_rate,commission_amount,status,tracking_code,paid_at) VALUES(?,?,?,?,?,?,'paid',?,?)").run(client.id, consultation.lastInsertRowid, "phone", lawyer.phone_price, rate, commission, "DR-DEMO-1405", start);
-    const conversation = db.prepare("INSERT INTO conversations(consultation_id,client_id,lawyer_id,status) VALUES(?,?,?,'closed')").run(consultation.lastInsertRowid, client.id, lawyer.id);
-    db.prepare("INSERT INTO chat_messages(conversation_id,sender_id,body,created_at) VALUES(?,?,?,?)").run(conversation.lastInsertRowid, client.id, "سلام، متن قرارداد را پیش از تماس بارگذاری کرده‌ام.", start);
-    db.prepare("INSERT INTO chat_messages(conversation_id,sender_id,body,created_at) VALUES(?,?,?,?)").run(conversation.lastInsertRowid, lawyer.user_id, "دریافت شد؛ بند فسخ را در جلسه با هم بررسی می‌کنیم.", end);
     db.prepare("INSERT INTO reviews(client_id,lawyer_id,consultation_id,consultation_type,body,rating,status) VALUES(?,?,?,?,?,5,'approved')").run(client.id, lawyer.id, consultation.lastInsertRowid, "phone", "توضیحات روشن و کاربردی بود و مسیر بعدی پرونده را دقیق متوجه شدم.");
     db.prepare("INSERT OR IGNORE INTO bookmarks(client_id,lawyer_id) VALUES(?,?)").run(client.id, lawyer.id);
   }
@@ -456,7 +555,6 @@ function addSeedWorkflow() {
     const rate = Number(db.prepare("SELECT value FROM settings WHERE key='site_commission'").get()?.value || 15);
     const commission = Math.round(amount * rate / 100);
     db.prepare("INSERT INTO orders(client_id,consultation_id,type,amount,commission_rate,commission_amount,status,tracking_code,paid_at) VALUES(?,?,?,?,?,?,'paid',?,?)").run(demoClient.id, consultation.lastInsertRowid, seed.type, amount, rate, commission, seed.trackingCode, start.toISOString());
-    db.prepare("INSERT INTO conversations(consultation_id,client_id,lawyer_id,status) VALUES(?,?,?,'closed')").run(consultation.lastInsertRowid, demoClient.id, demoLawyer.id);
     db.prepare("INSERT INTO reviews(client_id,lawyer_id,consultation_id,consultation_type,body,rating,status) VALUES(?,?,?,?,?,?,'approved')").run(demoClient.id, demoLawyer.id, consultation.lastInsertRowid, seed.type, seed.body, seed.rating);
   }
   if (!db.prepare("SELECT 1 FROM messages WHERE subject='پیگیری جمع‌بندی مشاوره' LIMIT 1").get()) {
@@ -474,11 +572,62 @@ function addSeedWorkflow() {
 }
 
 function backfillNewFields() {
+  db.prepare("UPDATE users SET avatar_url='/avatars/default-' || role || '.png' WHERE avatar_url IS NULL OR trim(avatar_url)=''").run();
+  db.prepare("UPDATE articles SET author_user_id=(SELECT id FROM users WHERE first_name || ' ' || last_name=articles.author LIMIT 1) WHERE author_user_id IS NULL").run();
+  db.prepare("UPDATE articles SET author_avatar=COALESCE((SELECT avatar_url FROM users WHERE id=articles.author_user_id),'/avatars/default-admin.png') WHERE author_avatar IS NULL OR trim(author_avatar)=''").run();
+  if (!db.prepare("SELECT 1 FROM settings WHERE key='paid_text_seed_v1'").get()) {
+    db.prepare("UPDATE lawyers SET text_price=? WHERE text_price=0").run(Number(db.prepare("SELECT value FROM settings WHERE key='default_text_price'").get()?.value || 250000));
+    db.prepare("INSERT INTO settings(key,value) VALUES('paid_text_seed_v1','1')").run();
+  }
   const rate = Number(db.prepare("SELECT value FROM settings WHERE key='site_commission'").get()?.value || 15);
   db.prepare("UPDATE orders SET commission_rate=? WHERE commission_rate IS NULL OR commission_rate=0").run(rate);
   db.prepare("UPDATE orders SET commission_amount=ROUND(amount*commission_rate/100.0) WHERE commission_amount IS NULL OR commission_amount=0").run();
   db.prepare("UPDATE orders SET paid_at=COALESCE(paid_at,created_at) WHERE status='paid'").run();
   db.prepare("UPDATE messages SET updated_at=COALESCE(updated_at,created_at,CURRENT_TIMESTAMP)").run();
+}
+
+function backfillLawyerSpecialties() {
+  const insert = db.prepare("INSERT OR IGNORE INTO lawyer_specialties(lawyer_id,service_id) VALUES(?,?)");
+  if (!db.prepare("SELECT 1 FROM settings WHERE key='lawyer_specialties_backfill_v1'").get()) {
+  const serviceByTitle = new Map(db.prepare("SELECT id,title FROM services").all().map((service) => [service.title, service.id]));
+  const seededSelections = new Map([
+    ["lawyer", ["خانواده و طلاق"]],
+    ["lawyer2", ["دعاوی کیفری", "جرایم رایانه‌ای"]],
+    ["lawyer3", ["دعاوی ملکی", "قرارداد و تجارت"]],
+    ["lawyer4", ["قرارداد و تجارت"]],
+    ["lawyer5", ["ارث و ثبت"]],
+    ["lawyer6", ["کار و بیمه"]],
+    ["lawyer.pending", ["مالیات و امور مالی"]],
+  ]);
+  for (const [username, titles] of seededSelections) {
+    const lawyer = db.prepare("SELECT l.id FROM lawyers l JOIN users u ON u.id=l.user_id WHERE u.username=?").get(username);
+    if (!lawyer) continue;
+    for (const title of titles) if (serviceByTitle.has(title)) insert.run(lawyer.id, serviceByTitle.get(title));
+  }
+
+  const services = db.prepare("SELECT id,title FROM services").all();
+  const genericWords = new Set(["دعاوی", "حقوق", "امور", "تخصصی", "و"]);
+  for (const lawyer of db.prepare("SELECT id,specialties FROM lawyers WHERE NOT EXISTS(SELECT 1 FROM lawyer_specialties ls WHERE ls.lawyer_id=lawyers.id)").all()) {
+    const legacy = String(lawyer.specialties || "").normalize("NFKC");
+    const exactParts = legacy.split(/[،,|]/).map((part) => part.trim()).filter(Boolean);
+    const matches = services.filter((service) => {
+      if (exactParts.includes(service.title)) return true;
+      const words = service.title.split(/\s+/).filter((word) => word.length >= 4 && !genericWords.has(word));
+      return words.some((word) => legacy.includes(word));
+    });
+    for (const service of matches) insert.run(lawyer.id, service.id);
+  }
+  db.prepare("INSERT INTO settings(key,value) VALUES('lawyer_specialties_backfill_v1','1')").run();
+  }
+
+  const labels = db.prepare(`SELECT group_concat(title,'، ') specialties FROM (
+    SELECT s.title FROM lawyer_specialties ls JOIN services s ON s.id=ls.service_id
+    WHERE ls.lawyer_id=? ORDER BY s.sort_order,s.id
+  )`);
+  for (const lawyer of db.prepare("SELECT id FROM lawyers WHERE EXISTS(SELECT 1 FROM lawyer_specialties ls WHERE ls.lawyer_id=lawyers.id)").all()) {
+    const specialties = labels.get(lawyer.id)?.specialties;
+    if (specialties) db.prepare("UPDATE lawyers SET specialties=? WHERE id=?").run(specialties, lawyer.id);
+  }
 }
 
 export function migrate() {
@@ -487,6 +636,7 @@ export function migrate() {
   addSeedLawyers();
   addSeedContent();
   addSeedSettings();
+  backfillLawyerSpecialties();
   backfillNewFields();
   addSeedWorkflow();
 }
@@ -495,7 +645,7 @@ export function currentUser(request) {
   const token = request.headers.authorization?.replace(/^Bearer\s+/i, "").trim();
   if (!token) return null;
   return db.prepare(`
-    SELECT u.id,u.username,u.role,u.first_name,u.last_name,u.email,u.phone,u.province,u.city,u.status,u.created_at
+    SELECT u.id,u.username,u.role,u.first_name,u.last_name,u.email,u.phone,u.avatar_url,u.province,u.city,u.status,u.created_at
     FROM sessions s JOIN users u ON u.id=s.user_id
     WHERE s.token=? AND datetime(s.expires_at)>datetime('now') AND u.status='active'
   `).get(token) ?? null;

@@ -11,7 +11,7 @@
     "dev:api": "node server/local-api.mjs",
     "build": "vinext build",
     "start": "vinext start",
-    "test": "npm run build && node --test --test-concurrency=1 tests/rendered-html.test.mjs tests/api-workflow.test.mjs",
+    "test": "npm run build && node --test --test-concurrency=1 tests/rendered-html.test.mjs tests/api-workflow.test.mjs tests/upgrade-requirements.test.mjs",
     "test:api": "node --test tests/api-workflow.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",

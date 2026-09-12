@@ -1,12 +1,12 @@
 export type AppointmentSlot = {id:number;startsAt:string;endsAt:string;consultationType:"phone"|"in_person";status:string};
-export type Lawyer = {id:number;name:string;initials:string;field:string;subfields:string[];city:string;rating:number;reviews:number;consults:number;cases:number;experience:number;phonePrice:number;textPrice:number;inPersonPrice:number;online:boolean;featured:boolean;color:string;bio:string;license:string;responseTime:string;inPersonEnabled?:boolean;availableSlots?:AppointmentSlot[];successRate?:number;createdAt?:string};
-export type Article = {id:number;slug:string;category:string;title:string;excerpt:string;body:string;author:string;date:string;readTime:string;color:string};
+export type Lawyer = {id:number;name:string;initials:string;avatarUrl?:string;field:string;subfields:string[];specialtyIds?:number[];city:string;rating:number;reviews:number;consults:number;cases:number;experience:number;phonePrice:number;textPrice:number;inPersonPrice:number;online:boolean;featured:boolean;color:string;bio:string;license:string;responseTime:string;inPersonEnabled?:boolean;availableSlots?:AppointmentSlot[];successRate?:number;createdAt?:string};
+export type Article = {id:number;slug:string;category:string;title:string;excerpt:string;body:string;author:string;date:string;readTime:string;color:string;coverUrl?:string;tags?:string[]};
 export type PublishedAnswer = {id:number;body:string;lawyer:string;createdAt?:string};
 export type LegalQuestion = {id:number;topic:string;title:string;body:string;answer:string;lawyer:string;date:string;answers:number;answerItems?:PublishedAnswer[]};
-export type LegalService = {title:string;text:string;icon:string;count:number};
-export type Testimonial = {name:string;type:string;rating:number;text:string;lawyerId?:number;lawyerName?:string;consultationType?:"phone"|"in_person";date?:string};
+export type LegalService = {id:number;title:string;text:string;backText:string;caseTypes:string[];icon:string;count:number};
+export type Testimonial = {name:string;type:string;rating:number;text:string;lawyerId?:number;lawyerName?:string;consultationType?:"phone"|"text"|"in_person";date?:string};
 export type Faq = {id:number;category:string;question:string;answer:string};
-export type PublicSettings = {siteName:string;commissionRate:number;defaultPhonePrice:number;defaultInPersonPrice:number;supportPhone:string;supportEmail:string;supportAddress:string;questionsEnabled:boolean;globalInPersonEnabled:boolean;maintenanceMode:boolean};
+export type PublicSettings = {raw?:Record<string,unknown>;stats?:Record<string,number>;footerConfig?:unknown;trustItems?:unknown[];termsContent?:string;privacyContent?:string;logoLightUrl?:string;logoDarkUrl?:string;faviconUrl?:string;heroImages?:string[];siteName:string;commissionRate:number;defaultPhonePrice:number;defaultInPersonPrice:number;supportPhone:string;supportEmail:string;supportAddress:string;questionsEnabled:boolean;globalInPersonEnabled:boolean;maintenanceMode:boolean};
 
 export const faqs:Faq[]=[
  {id:1,category:"حریم خصوصی",question:"چه کسانی به اطلاعات و مدارک من دسترسی دارند؟",answer:"فقط خود شما، وکیل مرتبط و مدیران مجاز سامانه به اطلاعات لازم برای ارائه و پیگیری خدمت دسترسی دارند."},
@@ -26,14 +26,14 @@ export const lawyers:Lawyer[]=[
 ];
 
 export const services:LegalService[]=[
- {title:"دعاوی کیفری",text:"دفاع و پیگیری تخصصی در دادسرا و دادگاه",icon:"ShieldCheck",count:12},
- {title:"خانواده و طلاق",text:"مهریه، حضانت، نفقه و اختلافات خانوادگی",icon:"HeartHandshake",count:9},
- {title:"دعاوی ملکی",text:"سند، سرقفلی، اجاره و مشارکت در ساخت",icon:"Building2",count:11},
- {title:"قرارداد و تجارت",text:"تنظیم قرارداد و اختلاف شرکت‌ها و شرکا",icon:"BriefcaseBusiness",count:8},
- {title:"چک و مطالبات",text:"چک، سفته، ضمانت و وصول مطالبات",icon:"FileCheck2",count:7},
- {title:"ارث و ثبت",text:"انحصار وراثت، تقسیم ترکه و امور ثبتی",icon:"Landmark",count:6},
- {title:"کار و بیمه",text:"حقوق معوقه، اخراج، بیمه و قرارداد کار",icon:"UsersRound",count:5},
- {title:"جرایم رایانه‌ای",text:"کلاهبرداری اینترنتی، هک و نشر اکاذیب",icon:"MonitorSmartphone",count:4},
+ {id:1,title:"دعاوی کیفری",text:"دفاع و پیگیری تخصصی در دادسرا و دادگاه",backText:"برای شکایت، دفاع یا تحقیقات کیفری، از همان قدم اول مسیر درست را با وکیل متخصص جلو ببر.",caseTypes:["کلاهبرداری و خیانت در امانت","جرایم رایانه‌ای","ضرب‌وجرح و تهدید"],icon:"shield",count:12},
+ {id:2,title:"خانواده و طلاق",text:"مهریه، حضانت، نفقه و اختلافات خانوادگی",backText:"برای تصمیم‌های حساس خانوادگی، حق‌وحقوقت را روشن و با آرامش بررسی کن.",caseTypes:["مهریه و نفقه","طلاق توافقی و یک‌طرفه","حضانت و ملاقات فرزند"],icon:"heart",count:9},
+ {id:3,title:"دعاوی ملکی",text:"سند، سرقفلی، اجاره و مشارکت در ساخت",backText:"مدارک و قراردادهای ملک را دقیق بررسی کن تا مسیر پیگیری کوتاه‌تر و مطمئن‌تر باشد.",caseTypes:["الزام به تنظیم سند","خلع ید و تصرف عدوانی","سرقفلی و اجاره"],icon:"building",count:11},
+ {id:4,title:"قرارداد و تجارت",text:"تنظیم قرارداد و اختلاف شرکت‌ها و شرکا",backText:"ریسک‌های قرارداد را پیش از امضا یا هنگام اختلاف با یک نگاه تخصصی پیدا کن.",caseTypes:["تنظیم و بازبینی قرارداد","اختلاف شرکا","فسخ و مطالبه خسارت"],icon:"briefcase",count:8},
+ {id:5,title:"چک و اسناد",text:"چک، سفته، ضمانت و وصول مطالبات",backText:"مهلت و مسیر اقدام برای اسناد تجاری مهم است؛ پرونده را با انتخاب درست شروع کن.",caseTypes:["چک برگشتی","سفته و ضمانت","مطالبه وجه"],icon:"file-check",count:7},
+ {id:6,title:"ارث و ثبت",text:"انحصار وراثت، تقسیم ترکه و امور ثبتی",backText:"سهم‌ها، مدارک و ترتیب کارهای ثبتی را از اول شفاف و مرحله‌به‌مرحله جلو ببر.",caseTypes:["انحصار وراثت","تقسیم و فروش ترکه","وصیت و ارث"],icon:"landmark",count:6},
+ {id:7,title:"کار و بیمه",text:"حقوق معوقه، اخراج، بیمه و قرارداد کار",backText:"حق کارگر یا کارفرما را با توجه به قرارداد، سابقه و مدارک دقیق پیگیری کن.",caseTypes:["حقوق و مزایای معوقه","اخراج و بازگشت به کار","بیمه تأمین اجتماعی"],icon:"users",count:5},
+ {id:8,title:"جرایم رایانه‌ای",text:"کلاهبرداری اینترنتی، دسترسی غیرمجاز و نشر اکاذیب",backText:"ادله دیجیتال را سریع حفظ کن و شکایت و پیگیری فنی را هماهنگ پیش ببر.",caseTypes:["کلاهبرداری اینترنتی","دسترسی غیرمجاز","تهدید و مزاحمت آنلاین"],icon:"monitor",count:4},
 ];
 
 export const questions:LegalQuestion[]=[

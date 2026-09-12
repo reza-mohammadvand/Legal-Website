@@ -13,6 +13,7 @@ const expectedTables = [
   "conversations",
   "documents",
   "faqs",
+  "lawyer_specialties",
   "lawyers",
   "messages",
   "orders",
@@ -34,14 +35,20 @@ try {
     .all()
     .map((row) => row.name);
   assert.deepEqual(tables, expectedTables);
-  const articleColumns = database
-    .prepare("PRAGMA table_info(articles)")
-    .all()
-    .map((column) => column.name);
-  for (const column of ["cover_image", "tags", "author_avatar"]) {
-    assert.ok(articleColumns.includes(column), `articles.${column} is missing`);
+  const requiredColumns = {
+    users: ["avatar_url"],
+    lawyers: ["profile_completed"],
+    articles: ["cover_image", "tags", "author_avatar", "author_user_id"],
+    consultations: ["source_question_id", "message_limit"],
+    services: ["back_description", "case_types"],
+  };
+  for (const [table, columns] of Object.entries(requiredColumns)) {
+    const actual = database.prepare(`PRAGMA table_info(${table})`).all().map((column) => column.name);
+    for (const column of columns) assert.ok(actual.includes(column), `${table}.${column} is missing`);
   }
-  console.log("Dadrah schema migration is valid and contains all 20 tables.");
+  assert.throws(() => database.prepare("INSERT INTO consultations(type,topic,message_limit) VALUES('text','Test',0)").run(), /CHECK constraint/);
+  assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);
+  console.log("Dadrah schema migration is valid and contains all 21 tables.");
 } finally {
   database.close();
 }

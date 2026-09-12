@@ -233,7 +233,8 @@ test("enforces question assignment, role guards, and server-side checkout", asyn
   assert.ok(consultationStart >= 0 && consultationEnd > consultationStart);
   const checkout = api.slice(consultationStart, consultationEnd);
   assert.doesNotMatch(checkout, /\bb\.amount\b/);
-  assert.match(checkout, /(phone_price|default_phone_price)/);
+  assert.match(checkout, /lawyer\s*\[\s*`\$\{type\}_price`\s*\]/);
+  assert.match(checkout, /default_\$\{type\}_price/);
   assert.match(checkout, /BEGIN\s+IMMEDIATE/);
   assert.match(checkout, /ROLLBACK/);
   assert.match(checkout, /simulated_paid/);

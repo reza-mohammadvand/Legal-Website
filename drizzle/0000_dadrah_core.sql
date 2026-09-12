@@ -7,6 +7,7 @@ CREATE TABLE users (
   last_name TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE,
   phone TEXT NOT NULL,
+  avatar_url TEXT,
   province TEXT,
   city TEXT,
   status TEXT NOT NULL DEFAULT 'active',
@@ -24,6 +25,7 @@ CREATE TABLE lawyers (
   in_person_price INTEGER,
   rating REAL NOT NULL DEFAULT 0,
   verified INTEGER NOT NULL DEFAULT 0,
+  profile_completed INTEGER NOT NULL DEFAULT 0,
   featured INTEGER NOT NULL DEFAULT 0,
   online INTEGER NOT NULL DEFAULT 0,
   in_person_enabled INTEGER NOT NULL DEFAULT 0
@@ -75,8 +77,11 @@ CREATE TABLE consultations (
   client_id INTEGER REFERENCES users(id),
   lawyer_id INTEGER REFERENCES lawyers(id),
   slot_id INTEGER REFERENCES appointment_slots(id),
+  source_question_id INTEGER REFERENCES questions(id),
+  message_limit INTEGER NOT NULL DEFAULT 3 CHECK(message_limit > 0),
   type TEXT NOT NULL,
   topic TEXT NOT NULL,
+  description TEXT,
   scheduled_at TEXT,
   amount INTEGER NOT NULL DEFAULT 0,
   payment_status TEXT NOT NULL DEFAULT 'simulated_paid',
@@ -129,6 +134,7 @@ CREATE TABLE articles (
   body TEXT NOT NULL,
   category TEXT NOT NULL,
   author TEXT NOT NULL,
+  author_user_id INTEGER REFERENCES users(id),
   cover_image TEXT,
   tags TEXT NOT NULL DEFAULT '[]',
   author_avatar TEXT,
@@ -141,10 +147,21 @@ CREATE TABLE services (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL UNIQUE,
   description TEXT NOT NULL,
+  back_description TEXT NOT NULL DEFAULT '',
+  case_types TEXT NOT NULL DEFAULT '[]',
   icon TEXT NOT NULL,
   active INTEGER NOT NULL DEFAULT 1,
   sort_order INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE lawyer_specialties (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  lawyer_id INTEGER NOT NULL REFERENCES lawyers(id) ON DELETE CASCADE,
+  service_id INTEGER NOT NULL REFERENCES services(id) ON DELETE RESTRICT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX lawyer_specialties_lawyer_service_unique ON lawyer_specialties(lawyer_id, service_id);
+CREATE INDEX lawyer_specialties_service_idx ON lawyer_specialties(service_id);
 --> statement-breakpoint
 CREATE TABLE faqs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -231,6 +248,10 @@ CREATE INDEX question_assignments_question_idx ON question_assignments(question_
 CREATE INDEX consultations_client_idx ON consultations(client_id);
 --> statement-breakpoint
 CREATE INDEX consultations_lawyer_idx ON consultations(lawyer_id);
+--> statement-breakpoint
+CREATE INDEX consultations_source_question_idx ON consultations(source_question_id);
+--> statement-breakpoint
+CREATE INDEX articles_author_status_idx ON articles(author_user_id, status);
 --> statement-breakpoint
 CREATE UNIQUE INDEX consultations_slot_unique_idx ON consultations(slot_id) WHERE slot_id IS NOT NULL;
 --> statement-breakpoint
