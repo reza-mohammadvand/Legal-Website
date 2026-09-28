@@ -528,9 +528,8 @@ const server = createServer(async (req, res) => {
       if (!/^09\d{9}$/.test(phone)) return json(res, 400, { error: "شماره موبایلت رو با ۰۹ و ۱۱ رقم بنویس." });
       const province = validText(body.province, 0, 80) ?? "";
       const city = validText(body.city, 0, 80) ?? "";
-      const licenseNumber = role === "lawyer" ? validText(body.licenseNumber, 2, 80) : null;
       const selectedSpecialties = role === "lawyer" ? resolveActiveSpecialties(body.specialtyIds, body.specialty ?? body.specialties) : null;
-      if (role === "lawyer" && (!licenseNumber || !selectedSpecialties)) return json(res, 400, { error: "شماره پروانه و حداقل یک حوزه تخصصی تعریف‌شده توسط مدیر لازمه؛ حداکثر ۸ مورد انتخاب کن." });
+      if (role === "lawyer" && !selectedSpecialties) return json(res, 400, { error: "حداقل یک حوزه تخصصی تعریف‌شده توسط مدیر لازمه؛ حداکثر ۸ مورد انتخاب کن." });
       if (db.prepare("SELECT 1 FROM users WHERE username=? OR lower(email)=lower(?)").get(username, email)) return json(res, 409, { error: "نام کاربری یا ایمیل قبلاً ثبت شده است" });
       db.exec("BEGIN IMMEDIATE");
       try {
@@ -538,7 +537,7 @@ const server = createServer(async (req, res) => {
         db.prepare("UPDATE users SET avatar_url=? WHERE id=?").run(`/avatars/default-${role}.png`, result.lastInsertRowid);
         if (role === "lawyer") {
           const defaultPhone = settingNumber("phone_price_min", 100000);
-          const lawyerResult = db.prepare("INSERT INTO lawyers(user_id,license_number,specialties,bio,phone_price,text_price,verified,in_person_enabled) VALUES(?,?,?,?,?,0,0,0)").run(result.lastInsertRowid, licenseNumber, selectedSpecialties.map((service) => service.title).join("، "), "پروفایل در انتظار تکمیل و تأیید مدیر", defaultPhone);
+          const lawyerResult = db.prepare("INSERT INTO lawyers(user_id,license_number,specialties,bio,phone_price,text_price,verified,in_person_enabled) VALUES(?,?,?,?,?,0,0,0)").run(result.lastInsertRowid, "", selectedSpecialties.map((service) => service.title).join("، "), "پروفایل در انتظار تکمیل و تأیید مدیر", defaultPhone);
           replaceLawyerSpecialties(Number(lawyerResult.lastInsertRowid), selectedSpecialties);
         }
         db.exec("COMMIT");
