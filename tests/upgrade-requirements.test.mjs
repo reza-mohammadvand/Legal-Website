@@ -129,6 +129,14 @@ test("keeps login role-aware, requires mobile registration, and exposes the pass
   assert.ok(app.includes("/auth/forgot-password"));
   assert.match(app, /name=["']phone["'][^>]*\brequired\b/i);
   assert.match(migration, /\bphone\s+TEXT\s+NOT\s+NULL\b/i);
+  const authModal = section(app, "function AuthModal", "function TextConsultationNotice");
+  const profilePanel = section(app, "function ProfilePanel", "function translateType");
+  assert.doesNotMatch(authModal, /SpecialtyPicker|specialtyIds/,
+    "Lawyer sign-up must defer specialty selection until the dashboard");
+  assert.match(profilePanel, /SpecialtyPicker/);
+  const registerApi = section(api, '/api/auth/register', '/api/profile');
+  assert.doesNotMatch(registerApi, /resolveActiveSpecialties|replaceLawyerSpecialties/,
+    "Registering a lawyer must not persist specialties before profile completion");
 });
 
 test("enforces the configurable free-question and top-lawyer assignment limits", async () => {
@@ -140,6 +148,7 @@ test("enforces the configurable free-question and top-lawyer assignment limits",
 
   assert.match(database, /["']free_question_limit["']\s*,\s*["']3["']/);
   assert.match(database, /["']max_question_lawyers["']\s*,\s*["']3["']/);
+  assert.match(createQuestion, /validText\(body\.body,\s*5,\s*5000\)/);
   assert.match(createQuestion, /COUNT\(\*\)[\s\S]{0,180}client_id\s*=\s*\?[^\n]{0,220}settingNumber\(["']free_question_limit["']\s*,\s*3\)/i);
   assert.match(createQuestion, /ORDER BY\s+l\.featured\s+DESC\s*,\s*l\.rating\s+DESC/i);
   assert.match(createQuestion, /LIMIT\s+\?[^\n]{0,160}answerLimit\(\)/i);
@@ -248,19 +257,25 @@ test("lets admin cancel an entire free question and stops further assignment", a
   assert.match(questionAdmin, /لغو[^<\n]{0,30}پرسش|پرسش[^<\n]{0,30}لغو/);
 });
 
-test("offers all four site-selected services with a reusable free-versus-paid notice", async () => {
+test("keeps the free question flow two-step and leaves paid service selection to booking", async () => {
   const app = await source("app/dadrah-app.tsx");
   const intake = section(app, "function IntakeModal", "function ConsultModal");
-  const optionArea = section(intake, "request-types", "request-summary");
+  const freeStart = intake.indexOf('if(kind==="question")return');
+  const legacyStart = intake.indexOf('return <ModalShell close={close} className="flow-modal intake-modal">', freeStart);
+  assert.ok(freeStart >= 0 && legacyStart > freeStart, "Missing the dedicated free-question return path");
+  const freeFlow = intake.slice(freeStart, legacyStart);
+  assert.match(freeFlow, /total=\{2\}/);
+  assert.match(freeFlow, /ثبت پرسش رایگان/);
+  assert.match(freeFlow, /body\.trim\(\)\.length<5/);
+  assert.doesNotMatch(freeFlow, /request-types|chooseKind\(/,
+    "Free questions must not ask the user to choose a consultation type");
 
-  for (const mode of ["question", "text", "phone", "in_person"]) {
-    assert.ok(optionArea.includes(`"${mode}"`) || optionArea.includes(`'${mode}'`),
-      `The site-selected flow is missing ${mode}`);
+  const paidBooking = section(app, "function ConsultModal", "function ReviewModal");
+  for (const mode of ["text", "phone", "in_person"]) {
+    assert.ok(paidBooking.includes(`"${mode}"`) || paidBooking.includes(`'${mode}'`),
+      `Paid booking is missing ${mode}`);
   }
-  assert.match(optionArea, /مشاوره[^<\n]{0,20}رایگان/);
-  assert.doesNotMatch(optionArea, /مشاوره متنی پولی/);
-  assert.match(optionArea, /تلفنی/);
-  assert.match(optionArea, /حضوری/);
+  assert.doesNotMatch(paidBooking, /مشاوره متنی پولی/);
 
   const noticeDeclaration = /function\s+([A-Z]\w*(?:Notice|Guide|Comparison)\w*)\s*\(/g;
   let notice;

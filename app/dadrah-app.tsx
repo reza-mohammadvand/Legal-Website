@@ -38,6 +38,8 @@ type IntakeDraft = {step:number;topic:string;body:string;kind:IntakeKind;publish
 type ConsultDraft = {step:number;mode:ConsultMode;topic:string;body?:string;slotId:number|null;terms:boolean;urgent?:boolean;file?:File|null;messageLimit?:number};
 type FlowModal = {type:"intake";lawyer?:Lawyer;draft?:IntakeDraft} | {type:"consult";lawyer:Lawyer;mode?:ConsultMode;draft?:ConsultDraft};
 type Modal = null | {type:"auth";mode?:"login"|"register"} | FlowModal | {type:"review";lawyer:Lawyer};
+type ToastTone = "success"|"error"|"warning"|"info";
+type ToastItem = {id:number;text:string;tone:ToastTone};
 const API = "http://localhost:8787/api";
 const PENDING_FLOW_KEY="dadrah-pending-flow";
 const money=(value:number)=>`${new Intl.NumberFormat("fa-IR").format(value)} تومان`;
@@ -51,6 +53,22 @@ function parseSetting(value:any,fallback:any){if(typeof value!=="string")return 
 function assetUrl(value?:string){if(!value)return "";return value.startsWith("/api/")||value.startsWith("/uploads/")?"http://localhost:8787"+value:value}
 function Avatar({src,name="",role="client",className=""}:{src?:string;name?:string;role?:string;className?:string}){return <img className={`avatar-image ${className}`} src={assetUrl(src)||`/avatars/default-${["client","lawyer","admin"].includes(role)?role:"client"}.png`} alt={name?`عکس ${name}`:"عکس پروفایل"} loading="lazy" onError={event=>{const fallback=`/avatars/default-${["client","lawyer","admin"].includes(role)?role:"client"}.png`;if(!event.currentTarget.src.endsWith(fallback))event.currentTarget.src=fallback}}/>}
 function ThemeToggle(){const [dark,setDark]=useState(false);useEffect(()=>{const next=window.localStorage.getItem("dadrah-theme")==="dark";setDark(next);document.documentElement.dataset.theme=next?"dark":"light"},[]);function toggle(){const next=!dark;setDark(next);document.documentElement.dataset.theme=next?"dark":"light";window.localStorage.setItem("dadrah-theme",next?"dark":"light")}return <button type="button" className="icon-button theme-toggle" title={dark?"حالت روشن":"حالت تاریک"} aria-label={dark?"حالت روشن":"حالت تاریک"} aria-pressed={dark} onClick={toggle}>{dark?<Sun/>:<Moon/>}</button>}
+function inferToastTone(text:string):ToastTone{
+ const value=text.trim().toLocaleLowerCase("fa-IR");
+ if(/ولی|اما|هشدار|موقتاً|غیرفعال|فقط |حداکثر|حداقل|باید |وارد حسابت|ابتدا وارد/.test(value))return "warning";
+ if(/خطا|ناموفق|انجام نشد|بارگذاری نشد|ارسال نشد|دریافت نشد|نرسید|پیدا نشد|یافت نشد|وجود ندارد|معتبر نیست|دسترسی ندار|error|failed|invalid|unauthorized|forbidden/.test(value))return "error";
+ if(/خوش |خوش‌|ثبت شد|ذخیره شد|اضافه شد|حذف شد|فعال شد|تأیید شد|منتشر شد|تغییر کرد|آماده|رسید|فرستاده شد|قرار گرفت/.test(value))return "success";
+ return "info";
+}
+function ToastNotice({toast,onClose}:{toast:ToastItem;onClose:()=>void}){
+ const Icon=toast.tone==="success"?CheckCircle2:toast.tone==="info"?Bell:AlertCircle;
+ const title={success:"انجام شد",error:"خطایی پیش آمد",warning:"توجه",info:"اطلاع‌رسانی"}[toast.tone];
+ return <aside className={`toast toast-${toast.tone}`} role={toast.tone==="error"?"alert":"status"} aria-live={toast.tone==="error"?"assertive":"polite"} aria-atomic="true">
+  <span className="toast-icon" aria-hidden="true"><Icon/></span>
+  <div className="toast-body"><b>{title}</b><p>{toast.text}</p></div>
+  <button type="button" className="toast-close" aria-label="بستن اعلان" onClick={onClose}><X/></button>
+ </aside>;
+}
 function ScrollRevealMotion(){
  useEffect(()=>{
   const motionPreference=window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -205,7 +223,8 @@ export default function DadrahApp(){
   const [route,setRoute]=useState<Route>({name:"home"});
   const [session,setSession]=useState<Session|null>(null);
   const [modal,setModal]=useState<Modal>(null);
-  const [toast,setToast]=useState("");
+  const [toast,setToast]=useState<ToastItem|null>(null);
+  const toastTimer=useRef<number|null>(null),toastSequence=useRef(0);
   const [saved,setSaved]=useState<number[]>([]);
   const [menuOpen,setMenuOpen]=useState(false);
   const [serverReady,setServerReady]=useState<boolean|null>(null);
@@ -254,7 +273,17 @@ export default function DadrahApp(){
     if(!link){link=document.createElement("link");link.rel="icon";document.head.appendChild(link)}
     link.href=assetUrl(publicSettings.faviconUrl)||"/favicon.svg";
   },[publicSettings.faviconUrl]);
-  const notify=(text:string)=>{setToast(text);window.setTimeout(()=>setToast(""),3600)};
+  useEffect(()=>()=>{if(toastTimer.current!==null)window.clearTimeout(toastTimer.current)},[]);
+  const dismissToast=()=>{if(toastTimer.current!==null)window.clearTimeout(toastTimer.current);toastTimer.current=null;setToast(null)};
+  const notify=(text:string,tone?:ToastTone)=>{
+   const message=String(text||"").trim();
+   if(!message)return;
+   if(toastTimer.current!==null)window.clearTimeout(toastTimer.current);
+   const resolvedTone=tone||inferToastTone(message),id=++toastSequence.current;
+   setToast({id,text:message,tone:resolvedTone});
+   const duration={success:4500,info:6000,warning:7500,error:9000}[resolvedTone];
+   toastTimer.current=window.setTimeout(()=>{setToast(current=>current?.id===id?null:current);toastTimer.current=null},duration);
+  };
   const openIntake=(lawyer?:Lawyer,kind:IntakeKind="question")=>{setModal({type:"intake",lawyer,draft:{step:1,topic:lawyer?.field||"",body:"",kind,publish:false,urgent:false,lawyerId:lawyer?.id||null,file:null}})};
   const openConsult=(lawyer:Lawyer,mode?:ConsultMode)=>{if(mode==="in_person"&&!publicSettings.globalInPersonEnabled){notify("رزرو حضوری موقتاً غیرفعال است");return}setModal({type:"consult",lawyer,mode})};
   const navigate=(next:Route)=>{window.history.pushState(next,"",pathFor(next));setRoute(next);setMenuOpen(false);setModal(null);window.scrollTo({top:0,behavior:"smooth"})};
@@ -285,19 +314,20 @@ export default function DadrahApp(){
   else page=<NotFound navigate={navigate}/>;
 
   const maintenanceActive=serverReady===true&&publicSettings.maintenanceMode&&session?.user.role!=="admin";
-  if(maintenanceActive)return <div className="maintenance-page"><div className="maintenance-panel"><Brand siteName={publicSettings.siteName} logoUrl={publicSettings.logoLightUrl} alternateLogoUrl={publicSettings.logoDarkUrl} onClick={()=>{}}/><span className="maintenance-icon"><Settings/></span><p className="maintenance-kicker">به‌روزرسانی سامانه</p><h1>{publicSettings.siteName} موقتاً در حال نگهداری است</h1><p>برای بهبود کیفیت خدمات، بخش عمومی برای مدت کوتاهی در دسترس نیست. کمی بعد دوباره مراجعه کنید.</p><div className="maintenance-contact"><Phone/><span>پشتیبانی</span><b dir="ltr">{publicSettings.supportPhone}</b></div><button className="primary-button" onClick={()=>setModal({type:"auth"})}>ورود مدیریت</button></div>{modal?.type==="auth"&&<AuthModal services={publicServices} settings={publicSettings} initialMode={modal.mode} close={closeModal} onLogin={handleLogin} notify={notify}/>} {toast&&<div className="toast" role="status"><CheckCircle2 size={20}/><span>{toast}</span></div>}</div>;
+  const toastNotice=toast?<ToastNotice key={toast.id} toast={toast} onClose={dismissToast}/>:null;
+  if(maintenanceActive)return <div className="maintenance-page"><div className="maintenance-panel"><Brand siteName={publicSettings.siteName} logoUrl={publicSettings.logoLightUrl} alternateLogoUrl={publicSettings.logoDarkUrl} onClick={()=>{}}/><span className="maintenance-icon"><Settings/></span><p className="maintenance-kicker">به‌روزرسانی سامانه</p><h1>{publicSettings.siteName} موقتاً در حال نگهداری است</h1><p>برای بهبود کیفیت خدمات، بخش عمومی برای مدت کوتاهی در دسترس نیست. کمی بعد دوباره مراجعه کنید.</p><div className="maintenance-contact"><Phone/><span>پشتیبانی</span><b dir="ltr">{publicSettings.supportPhone}</b></div><button className="primary-button" onClick={()=>setModal({type:"auth"})}>ورود مدیریت</button></div>{modal?.type==="auth"&&<AuthModal services={publicServices} settings={publicSettings} initialMode={modal.mode} close={closeModal} onLogin={handleLogin} notify={notify}/>} {toastNotice}</div>;
 
   return <div className="app-shell">
     <ScrollRevealMotion/>
     {route.name!=="dashboard"&&<SiteHeader route={route} session={session} settings={publicSettings} navigate={navigate} login={()=>setModal({type:"auth"})} intake={()=>openIntake()} menuOpen={menuOpen} setMenuOpen={setMenuOpen} logout={logout}/>}
-    {serverReady===false&&<div className="server-warning"><AlertCircle size={16}/><span>بک‌اند محلی در دسترس نیست. پروژه را با <b>npm run dev</b> اجرا کنید.</span></div>}
+    {serverReady===false&&<div className="server-warning" role="alert" aria-live="assertive" aria-atomic="true"><AlertCircle size={16}/><span>بک‌اند محلی در دسترس نیست. پروژه را با <b>npm run dev</b> اجرا کنید.</span></div>}
     <main>{page}</main>
     {route.name!=="dashboard"&&<SiteFooter navigate={navigate} settings={publicSettings}/>}
     {modal?.type==="auth"&&<AuthModal services={publicServices} settings={publicSettings} initialMode={modal.mode} close={closeModal} onLogin={handleLogin} notify={notify}/>}
     {modal?.type==="intake"&&<IntakeModal lawyer={modal.lawyer} lawyers={publicLawyers} services={publicServices} draft={modal.draft} settings={publicSettings} close={closeModal} session={session} requireLogin={(draft:IntakeDraft)=>requireFlowLogin({type:"intake",lawyer:publicLawyers.find(item=>item.id===draft.lawyerId),draft})} startConsult={(selected:Lawyer,mode:ConsultMode,nextDraft:ConsultDraft)=>setModal({type:"consult",lawyer:selected,mode,draft:nextDraft})} notify={notify} navigate={navigate}/>}
     {modal?.type==="consult"&&<ConsultModal lawyer={modal.lawyer} initialMode={modal.mode} draft={modal.draft} settings={publicSettings} inPersonAllowed={publicSettings.globalInPersonEnabled} close={closeModal} session={session} requireLogin={(draft:ConsultDraft)=>requireFlowLogin({type:"consult",lawyer:modal.lawyer,mode:modal.mode,draft})} notify={notify} navigate={navigate}/>}
     {modal?.type==="review"&&<ReviewModal lawyer={modal.lawyer} close={closeModal} session={session} notify={notify}/>}
-    {toast&&<div className="toast"><CheckCircle2 size={20}/><span>{toast}</span></div>}
+    {toastNotice}
   </div>;
 }
 
@@ -424,7 +454,7 @@ function QuestionsPage({questions,intake}:any){
 function QuestionCard({question,expanded=false,onToggle,onClick}:{question:LegalQuestion;expanded?:boolean;onToggle?:()=>void;onClick?:()=>void}){
  const answers=Array.isArray(question.answerItems)&&question.answerItems.length?question.answerItems:question.answer?[{id:0,body:question.answer,lawyer:question.lawyer,createdAt:undefined}]:[],answerPanelId=`question-answers-${question.id}`,accordion=Boolean(onToggle);
  const action=<button type="button" className={accordion?"answer-toggle":undefined} aria-expanded={accordion?expanded:undefined} aria-controls={accordion?answerPanelId:undefined} onClick={accordion?onToggle:onClick}>{accordion?(expanded?"بستن پاسخ‌ها":answers.length?`مشاهده ${new Intl.NumberFormat("fa-IR").format(answers.length)} پاسخ`:"وضعیت پاسخ"):(question.answers?`مشاهده ${new Intl.NumberFormat("fa-IR").format(question.answers)} پاسخ`:"مشاهده پرسش")} {accordion?<ChevronDown/>:<ArrowLeft/>}</button>;
- return <article className={`question-card${accordion&&expanded?" answers-open":""}`}><header><span>{question.topic}</span><small>{question.date}</small></header><h3>{question.title}</h3><p>{question.body}</p>{accordion&&<div className="question-card-action">{action}</div>}{!accordion&&<footer><div><Avatar className="mini-avatar" role="lawyer" name={question.lawyer}/><span><b>{question.lawyer}</b><small>{answers.length?<><BadgeCheck/> پاسخ وکیل تأییدشده</>:"هنوز پاسخی منتشر نشده"}</small></span></div>{action}</footer>}{accordion&&<div id={answerPanelId} className={`question-answers${expanded?" open":""}`} aria-hidden={!expanded}><div className="question-answers-inner">{answers.length?answers.map((answer,index)=><section className="question-inline-answer" key={`${answer.id}-${answer.lawyer}-${index}`}><header><Avatar className="mini-avatar" role="lawyer" name={answer.lawyer}/><div><b>{answer.lawyer}</b><small><BadgeCheck/> وکیل تأییدشده</small></div><time>{answer.createdAt?faDate(answer.createdAt):question.date}</time></header><p>{answer.body}</p></section>):<div className="question-answer-empty"><Clock3/><div><b>هنوز پاسخی منتشر نشده</b><span>به‌محض ثبت پاسخ وکیل، همین‌جا نمایش داده می‌شه.</span></div></div>}</div></div>}</article>
+ return <article className={`question-card${accordion&&expanded?" answers-open":""}`}><header><span className="question-topic"><Tag aria-hidden="true"/>{question.topic}</span><small>{question.date}</small></header><h3>{question.title}</h3><p>{question.body}</p>{accordion&&<div className="question-card-action">{action}</div>}{!accordion&&<footer><div><Avatar className="mini-avatar" role="lawyer" name={question.lawyer}/><span><b>{question.lawyer}</b><small>{answers.length?<><BadgeCheck/> پاسخ وکیل تأییدشده</>:"هنوز پاسخی منتشر نشده"}</small></span></div>{action}</footer>}{accordion&&<div id={answerPanelId} className={`question-answers${expanded?" open":""}`} aria-hidden={!expanded}><div className="question-answers-inner">{answers.length?answers.map((answer,index)=><section className="question-inline-answer" key={`${answer.id}-${answer.lawyer}-${index}`}><header><Avatar className="mini-avatar" role="lawyer" name={answer.lawyer}/><div><b>{answer.lawyer}</b><small><BadgeCheck/> وکیل تأییدشده</small></div><time>{answer.createdAt?faDate(answer.createdAt):question.date}</time></header><p>{answer.body}</p></section>):<div className="question-answer-empty"><Clock3/><div><b>هنوز پاسخی منتشر نشده</b><span>به‌محض ثبت پاسخ وکیل، همین‌جا نمایش داده می‌شه.</span></div></div>}</div></div>}</article>
 }
 function QuestionPage({question,intake,navigate}:any){
  const publishedAnswers=Array.isArray(question.answerItems)&&question.answerItems.length?question.answerItems:question.answer?[{id:0,body:question.answer,lawyer:question.lawyer,createdAt:""}]:[];
@@ -537,7 +567,7 @@ function SpecialtyPicker({services=[],initialIds=[],disabled=false}:any){
  </fieldset>;
 }
 
-function AuthModal({close,onLogin,notify,services=[],settings,initialMode="login"}:any){
+function AuthModal({close,onLogin,notify,settings,initialMode="login"}:any){
  const [mode,setMode]=useState<"login"|"register"|"forgot">(initialMode),[role,setRole]=useState<Role>("client"),[busy,setBusy]=useState(false),[message,setMessage]=useState(""),[error,setError]=useState("");
  const roleDetails:Record<Role,{title:string;note:string;icon:ReactNode}>={client:{title:"موکل",note:"دریافت مشاوره",icon:<UserRound/>},lawyer:{title:"وکیل",note:"ارائه خدمات حقوقی",icon:<BriefcaseBusiness/>},admin:{title:"مدیر",note:"مدیریت سامانه",icon:<UserCog/>}};
  const authSubtitle=mode==="forgot"?"شماره‌ای که باهاش ثبت‌نام کردی رو وارد کن تا درخواست بازیابی ثبت بشه.":mode==="login"?"برای ادامه مسیر حقوقی، وارد حساب خودت شو.":role==="lawyer"?"حساب حرفه‌ای بساز و بعد از ورود، پروفایل و مدارکت رو کامل کن.":"چند قدم کوتاه تا ساخت حساب و شروع مشاوره فاصله داری.";
@@ -553,9 +583,7 @@ function AuthModal({close,onLogin,notify,services=[],settings,initialMode="login
     const data=await request("/auth/login",{method:"POST",body:JSON.stringify({username:f.get("username"),password:f.get("password"),expectedRole:role})});
     onLogin(data);
    }else{
-    const specialtyIds=f.getAll("specialtyIds").map(Number);
-    if(role==="lawyer"&&(specialtyIds.length<1||specialtyIds.length>8))throw new Error("حداقل یک و حداکثر ۸ حوزه تخصصی انتخاب کن.");
-    await request("/auth/register",{method:"POST",body:JSON.stringify({username:f.get("username"),password:f.get("password"),firstName:f.get("firstName"),lastName:f.get("lastName"),email:f.get("email"),phone:f.get("phone"),role,specialtyIds})});
+    await request("/auth/register",{method:"POST",body:JSON.stringify({username:f.get("username"),password:f.get("password"),firstName:f.get("firstName"),lastName:f.get("lastName"),email:f.get("email"),phone:f.get("phone"),role})});
     setMode("login");
     setMessage(role==="lawyer"?"حسابت ساخته شد! وارد شو و پروفایل و مدارکت رو کامل کن.":"حسابت آماده‌ست! حالا وارد شو.");
     notify("خوش اومدی به دادراه!");
@@ -572,7 +600,6 @@ function AuthModal({close,onLogin,notify,services=[],settings,initialMode="login
     <label>نام خانوادگی<input name="lastName" autoComplete="family-name" required/></label>
     <label>شماره موبایل<input name="phone" type="tel" inputMode="tel" autoComplete="tel" required placeholder="09123456789"/></label>
     <label>ایمیل<input name="email" type="email" autoComplete="email" required/></label>
-    {role==="lawyer"&&<SpecialtyPicker services={services} disabled={busy}/>}
    </div>}
    {mode==="forgot"?<><p>شماره موبایلی که باهاش ثبت‌نام کردی رو بنویس.</p><label>شماره موبایل<input name="phone" type="tel" inputMode="tel" autoComplete="tel" required/></label></>:<><label>نام کاربری<input name="username" autoComplete="username" required/></label><label>رمز عبور<input name="password" type="password" autoComplete={mode==="login"?"current-password":"new-password"} required minLength={8}/></label></>}
    {error&&<p className="control-error" role="alert"><AlertCircle/>{error}</p>}
@@ -589,7 +616,7 @@ function TextConsultationNotice({limit=3,className="",freeEnabled=true}:{limit?:
 }
 
 function IntakeModal({lawyer,lawyers=[],services=[],draft,settings,close,session,requireLogin,startConsult,notify,navigate}:any){
- const now=useStableNow(),initialKind=(draft?.kind||"question") as IntakeKind,initialTopic=String(draft?.topic||lawyer?.field||"");
+ const now=useStableNow(),initialKind="question" as IntakeKind,initialTopic=String(draft?.topic||lawyer?.field||"");
  const candidates=useMemo(()=>lawyer?[lawyer]:(Array.isArray(lawyers)?lawyers:[]).filter((item:Lawyer)=>item&&item.id),[lawyer,lawyers]);
  const topicOptions=useMemo(()=>{
   const titles=(Array.isArray(services)?services:[]).map((item:LegalService)=>item.title).filter(Boolean);
@@ -602,7 +629,7 @@ function IntakeModal({lawyer,lawyers=[],services=[],draft,settings,close,session
   return true;
  }
  function best(next:IntakeKind,subject:string){return [...candidates].filter(item=>eligible(item,next)).sort((a,b)=>{const score=(item:Lawyer)=>(`${item.field} ${item.subfields.join(" ")}`.includes(subject)?1000:0)+(item.featured?100:0)+(item.online?40:0)+(Number(item.rating)||0)*10;return score(b)-score(a)})[0]}
- const [step,setStep]=useState(Number(draft?.step||1)),[topic,setTopic]=useState(initialTopic),[body,setBody]=useState(String(draft?.body||"")),[kind,setKind]=useState<IntakeKind>(initialKind),[publish,setPublish]=useState(Boolean(draft?.publish)),[urgent,setUrgent]=useState(Boolean(draft?.urgent)),[selectedLawyer,setSelectedLawyer]=useState<Lawyer|undefined>(()=>lawyer||(initialKind!=="question"?best(initialKind,initialTopic):undefined)),[file,setFile]=useState<File|null>(draft?.file||null),[busy,setBusy]=useState(false),[error,setError]=useState("");
+ const [step,setStep]=useState(Math.min(2,Math.max(1,Number(draft?.step||1)))),[topic,setTopic]=useState(initialTopic),[body,setBody]=useState(String(draft?.body||"")),[kind,setKind]=useState<IntakeKind>(initialKind),[publish,setPublish]=useState(Boolean(draft?.publish)),[urgent,setUrgent]=useState(Boolean(draft?.urgent)),[selectedLawyer,setSelectedLawyer]=useState<Lawyer|undefined>(undefined),[file,setFile]=useState<File|null>(draft?.file||null),[busy,setBusy]=useState(false),[error,setError]=useState("");
  const inputRef=useRef<HTMLInputElement>(null),limit=Number(settings?.raw?.text_message_limit||3),freeLimit=Number(settings?.raw?.free_question_limit||3),maxLawyers=Number(settings?.raw?.max_question_lawyers||3);
  const labels:Record<IntakeKind,string>={question:"مشاوره رایگان",text:"مشاوره متنی",phone:"مشاوره تلفنی",in_person:"مشاوره حضوری"};
  function chooseFile(next?:File){if(!next)return;const allowed=["application/pdf","image/jpeg","image/png"].includes(next.type)||/\.(pdf|jpe?g|png)$/i.test(next.name);if(!allowed){notify("فقط فایل PDF، JPG یا PNG قابل بارگذاریه");return}if(next.size>10*1024*1024){notify("حجم فایل باید حداکثر ۱۰ مگابایت باشه");return}setFile(next)}
@@ -618,9 +645,35 @@ function IntakeModal({lawyer,lawyers=[],services=[],draft,settings,close,session
   }
   if(!session){requireLogin(currentDraft());return}
   setBusy(true);setError("");
-  try{const created=await request("/questions",{method:"POST",body:JSON.stringify({topic,body,publishAllowed:publish,urgent,lawyerId:lawyer?.id})},session.token);try{await uploadQuestion(Number(created.id))}catch(reason){close();notify(`پرسشت ثبت شد، ولی فایل نرسید: ${(reason as Error).message}`);return}close();notify(lawyer?`پرسشت مستقیم برای ${lawyer.name} فرستاده شد`:`پرسشت برای حداکثر ${new Intl.NumberFormat("fa-IR").format(maxLawyers)} وکیل مرتبط رفت`)}catch(reason){setError((reason as Error).message)}finally{setBusy(false)}
+  try{const created=await request("/questions",{method:"POST",body:JSON.stringify({topic,body,publishAllowed:publish,urgent})},session.token);try{await uploadQuestion(Number(created.id))}catch(reason){close();notify(`پرسشت ثبت شد، ولی فایل نرسید: ${(reason as Error).message}`);return}close();notify(`پرسشت برای حداکثر ${new Intl.NumberFormat("fa-IR").format(maxLawyers)} وکیل مرتبط رفت`)}catch(reason){setError((reason as Error).message)}finally{setBusy(false)}
  }
  const serviceReady=kind==="question"?settings?.questionsEnabled!==false:Boolean(selectedLawyer),price=Number(kind==="text"?selectedLawyer?.textPrice:kind==="phone"?selectedLawyer?.phonePrice:kind==="in_person"?selectedLawyer?.inPersonPrice:0),urgentRate=Math.min(100,Math.max(0,Number(settings?.urgentSurchargePercent??settings?.raw?.urgent_surcharge_percent??0))),urgentFee=kind!=="question"&&urgent?Math.round(price*urgentRate/100):0,payable=price+urgentFee;
+ if(kind==="question")return <ModalShell close={close} className="flow-modal intake-modal free-question-flow">
+  <FlowHeader step={step} total={2} title="ثبت پرسش رایگان"/>
+  <p className="quota-note">هر حساب تا {new Intl.NumberFormat("fa-IR").format(freeLimit)} پرسش رایگان داره و جواب هر وکیل به‌محض ثبت برای تو نمایش داده می‌شه.</p>
+  <div className="flow-body">
+   {step===1&&<>
+    <h2>موضوع مسئله‌ات چیه؟</h2>
+    <p>موضوع درست کمک می‌کنه پرسشت سریع‌تر به وکلای مرتبط برسه.</p>
+    <div className="topic-options">{topicOptions.map(item=><button type="button" className={topic===item?"active":""} onClick={()=>setTopic(item)} key={item}>{item}<Check/></button>)}</div>
+   </>}
+   {step===2&&<>
+    <h2>سؤالت رو برامون بنویس</h2>
+    <p>حداقل ۵ نویسه کافیه؛ اطلاعات هویتی غیرضروری رو ننویس.</p>
+    <label className="textarea-label"><textarea value={body} onChange={event=>setBody(event.target.value)} minLength={5} maxLength={1200} rows={6} placeholder="چه اتفاقی افتاده و دقیقاً چه کمکی می‌خوای؟"/><small className={body.trim().length>0&&body.trim().length<5?"is-warning":""}>{new Intl.NumberFormat("fa-IR").format(body.length)} از ۱۲۰۰ نویسه · حداقل ۵ نویسه</small></label>
+    <input ref={inputRef} hidden type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" onChange={event=>chooseFile(event.target.files?.[0])}/>
+    <div className="upload-zone"><Upload/><div><b>{file?file.name:"اگر مدرکی داری، همین‌جا اضافه کن"}</b><small>{file?`${formatBytes(file.size)} · فقط افراد مجاز می‌بیننش`:"PDF، JPG یا PNG تا ۱۰ مگابایت"}</small></div>{file?<button type="button" onClick={()=>{setFile(null);if(inputRef.current)inputRef.current.value=""}}><X size={17}/> حذف</button>:<button type="button" onClick={()=>inputRef.current?.click()}>انتخاب فایل</button>}</div>
+    <label className="urgent-check consult-urgent"><input type="checkbox" checked={urgent} onChange={event=>setUrgent(event.target.checked)}/><span><b>این پرسش فوریه</b><small>پرسشت با اولویت بیشتری بررسی می‌شه و همچنان کاملاً رایگانه.</small></span></label>
+    <label className="consent"><input type="checkbox" checked={publish} onChange={event=>setPublish(event.target.checked)}/><span><b>نسخه بدون نام سؤال قابل انتشار باشه</b><small>اختیاریه و هیچ اطلاعات هویتی نمایش داده نمی‌شه.</small></span></label>
+    <div className="request-summary"><b>خلاصه پرسش</b><p><span>موضوع</span>{topic}</p><p><span>پاسخ‌دهنده‌ها</span>حداکثر {new Intl.NumberFormat("fa-IR").format(maxLawyers)} وکیل مرتبط</p><p><span>اولویت</span>{urgent?"فوری":"عادی"}</p>{file&&<p><span>مدرک</span>{file.name}</p>}</div>
+    {error&&<p className="control-error" role="alert"><AlertCircle/> {error}</p>}
+   </>}
+  </div>
+  <div className="flow-footer">
+   {step>1&&<button type="button" className="back-button" onClick={()=>setStep(1)}><ArrowRight/> مرحله قبل</button>}
+   <button type="button" className="primary-button" disabled={busy||(step===1&&!topic)||(step===2&&body.trim().length<5)||!serviceReady} onClick={()=>step===1?setStep(2):finish()}>{busy?"در حال ثبت...":step===1?<>ادامه <ArrowLeft/></>:<>ثبت پرسش <Check/></>}</button>
+  </div>
+ </ModalShell>;
  return <ModalShell close={close} className="flow-modal intake-modal"><FlowHeader step={step} total={3} title="ثبت درخواست حقوقی"/><p className="quota-note">هر حساب تا {new Intl.NumberFormat("fa-IR").format(freeLimit)} پرسش رایگان داره و جواب هر وکیل به‌محض ثبت برای تو نمایش داده می‌شه.</p>{selectedLawyer&&<div className="selected-lawyer auto-lawyer"><Avatar className="lawyer-portrait small" role="lawyer" name={selectedLawyer.name} src={selectedLawyer.avatarUrl}/><div><b>{selectedLawyer.name}</b><small>{lawyer?"انتخاب خودت":"پیشنهاد خودکار دادراه"} · {selectedLawyer.field}</small></div><BadgeCheck/></div>}<div className="flow-body">{step===1&&<><h2>موضوع مسئله‌ات چیه؟</h2><p>موضوع درست کمک می‌کنه درخواستت به وکیل مرتبط برسه.</p><div className="topic-options">{topicOptions.map(item=><button type="button" className={topic===item?"active":""} onClick={()=>setTopic(item)} key={item}>{item}<Check/></button>)}</div></>}{step===2&&<><h2>کمی بیشتر برامون بگو</h2><p>اطلاعات هویتی غیرضروری رو ننویس؛ فایل فقط به افراد مجاز نشون داده می‌شه.</p><label className="textarea-label"><textarea value={body} onChange={event=>setBody(event.target.value)} maxLength={1200} rows={7} placeholder="چه اتفاقی افتاده و دقیقاً چه کمکی می‌خوای؟"/><small>{new Intl.NumberFormat("fa-IR").format(body.length)} از ۱۲۰۰ نویسه</small></label><input ref={inputRef} hidden type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" onChange={event=>chooseFile(event.target.files?.[0])}/><div className="upload-zone"><Upload/><div><b>{file?file.name:"اگر مدرکی داری، همین‌جا اضافه کن"}</b><small>{file?`${formatBytes(file.size)} · فقط افراد مجاز می‌بیننش`:"PDF، JPG یا PNG تا ۱۰ مگابایت"}</small></div>{file?<button type="button" onClick={()=>{setFile(null);if(inputRef.current)inputRef.current.value=""}}><X size={17}/> حذف</button>:<button type="button" onClick={()=>inputRef.current?.click()}>انتخاب فایل</button>}</div></>}{step===3&&<><h2>چه جور مشاوره‌ای می‌خوای؟</h2><p>اگر وکیل انتخاب نکردی، دادراه بهترین گزینه آماده و مرتبط رو برات پیدا می‌کنه.</p><div className="request-types service-four"><button type="button" disabled={settings?.questionsEnabled===false} className={kind==="question"?"active":""} onClick={()=>chooseKind("question")}><HelpCircle/><div><b>مشاوره رایگان</b><small>یک سؤال، پاسخ اولیه چند وکیل</small></div><span>رایگان</span></button><button type="button" className={kind==="text"?"active":""} onClick={()=>chooseKind("text")}><MessageCircleMore/><div><b>مشاوره متنی</b><small>گفتگوی خصوصی و نوبتی</small></div><span>{kind==="text"&&price?money(payable):"با وکیل منتخب"}</span></button><button type="button" className={kind==="phone"?"active":""} onClick={()=>chooseKind("phone")}><Phone/><div><b>مشاوره تلفنی</b><small>زمان رو پشتیبانی هماهنگ می‌کنه</small></div><span>{kind==="phone"&&price?money(payable):"با وکیل منتخب"}</span></button><button type="button" disabled={!settings?.globalInPersonEnabled||!candidates.some(item=>eligible(item,"in_person"))} className={kind==="in_person"?"active":""} onClick={()=>chooseKind("in_person")}><CalendarDays/><div><b>مشاوره حضوری</b><small>انتخاب یک زمان آزاد واقعی</small></div><span>{kind==="in_person"&&price?money(payable):"رزرو نوبت"}</span></button></div><button type="button" className="change-lawyer-action" onClick={()=>{close();navigate({name:"lawyers"})}}><UsersRound/>{lawyer||selectedLawyer?"تغییر وکیل":"خودم وکیل رو انتخاب می‌کنم"}<ArrowLeft/></button><label className="urgent-check consult-urgent"><input type="checkbox" checked={urgent} onChange={event=>setUrgent(event.target.checked)}/><span><b>درخواست فوری</b><small>برای مشاوره‌های غیررایگان، {new Intl.NumberFormat("fa-IR",{maximumFractionDigits:1}).format(urgentRate)} درصد به هزینه مشاوره اضافه می‌شه؛ مشاوره رایگان همچنان بدون هزینه می‌مونه.</small></span></label><TextConsultationNotice limit={limit}/>{kind==="question"&&<label className="consent"><input type="checkbox" checked={publish} onChange={event=>setPublish(event.target.checked)}/><span><b>نسخه بدون نام سؤال قابل انتشار باشه</b><small>اختیاریه و هیچ اطلاعات هویتی نمایش داده نمی‌شه.</small></span></label>}<div className="request-summary"><b>خلاصه درخواست</b><p><span>موضوع</span>{topic}</p><p><span>نوع</span>{labels[kind]}</p><p><span>وکیل</span>{kind==="question"&&!lawyer?"ارجاع به وکلای برتر مرتبط":selectedLawyer?.name||"هنوز پیدا نشده"}</p><p><span>فوریت</span>{urgent?"فوری":"عادی"}</p>{kind!=="question"&&urgent&&<p><span>هزینه فوریت</span>{money(urgentFee)} ({new Intl.NumberFormat("fa-IR",{maximumFractionDigits:1}).format(urgentRate)}٪)</p>}{kind!=="question"&&<p><span>مبلغ نهایی</span>{money(payable)}</p>}{file&&<p><span>مدرک</span>{file.name}</p>}</div>{error&&<p className="control-error" role="alert"><AlertCircle/> {error}</p>}</>}</div><div className="flow-footer">{step>1&&<button type="button" className="back-button" onClick={()=>setStep(step-1)}><ArrowRight/> مرحله قبل</button>}<button type="button" className="primary-button" disabled={busy||(step===1&&!topic)||(step===2&&body.trim().length<20)||(step===3&&!serviceReady)} onClick={()=>step<3?setStep(step+1):finish()}>{busy?"در حال ثبت...":step<3?<>ادامه <ArrowLeft/></>:kind==="question"?<>ثبت پرسش <Check/></>:<>ادامه رزرو <ArrowLeft/></>}</button></div></ModalShell>
 }
 
@@ -1008,7 +1061,7 @@ function ChatPanel({viewer,data,session,refresh,notify,navigate}:any){
  async function send(event:FormEvent<HTMLFormElement>){event.preventDefault();const body=text.trim();if(!active||!body)return;setBusy(true);setError("");try{await request(active.isQuestion?"/answers":"/chat/messages",{method:"POST",body:JSON.stringify(active.isQuestion?{questionId:active.question_id,body}:{conversationId:active.id,body})},session.token);setText("");await refresh()}catch(reason){setError((reason as Error).message)}finally{setBusy(false)}}
  function afterRebook(){refresh();setActiveId(null)}
  return <div className="chat-layout">
-  <aside><label><Search/><input value={query} onChange={event=>setQuery(event.target.value)} placeholder="جست‌وجوی گفتگو"/></label>{filtered.map((item:any)=>{const messages=item.messages||[],last=messages[messages.length-1];return <button className={Number(item.id)===activeId?"active":""} key={item.id} onClick={()=>{setActiveId(Number(item.id));setError("");setText("")}}><Avatar role={viewer==="lawyer"?"client":"lawyer"} name={otherName(item)} src={viewer==="lawyer"?item.client_avatar_url:item.lawyer_avatar_url}/><p><b>{otherName(item)||"گفتگوی مشاوره"}</b><small>{last?.body||item.topic}</small></p>{item.isQuestion&&<small>رایگان</small>}</button>})}</aside>
+  <aside><label className="input-icon"><Search/><input value={query} onChange={event=>setQuery(event.target.value)} placeholder="جست‌وجوی گفتگو"/></label>{filtered.map((item:any)=>{const messages=item.messages||[],last=messages[messages.length-1];return <button className={Number(item.id)===activeId?"active":""} key={item.id} onClick={()=>{setActiveId(Number(item.id));setError("");setText("")}}><Avatar role={viewer==="lawyer"?"client":"lawyer"} name={otherName(item)} src={viewer==="lawyer"?item.client_avatar_url:item.lawyer_avatar_url}/><p><b>{otherName(item)||"گفتگوی مشاوره"}</b><small>{last?.body||item.topic}</small></p>{item.isQuestion&&<small>رایگان</small>}</button>})}</aside>
   {active?<section>
    <header><Avatar role={viewer==="lawyer"?"client":"lawyer"} name={otherName(active)} src={viewer==="lawyer"?active.client_avatar_url:active.lawyer_avatar_url}/><div><b>{otherName(active)||"گفتگوی مشاوره"}</b><small>{active.topic}{active.tracking_code&&<> · <span dir="ltr">{active.tracking_code}</span></>}</small></div><select aria-label="انتخاب گفتگو" value={activeId||""} onChange={event=>{setActiveId(Number(event.target.value));setText("")}}>{conversations.map((item:any)=><option value={item.id} key={item.id}>{item.topic} · {otherName(item)}</option>)}</select><Status value={active.status||"open"}/></header>
    {isText&&<div className="chat-quota" title="پیام‌های پشت‌سرهم تا قبل از پاسخ طرف مقابل، یک نوبت حساب می‌شن"><MessageCircleMore/><span>{continuesOwnTurn?"در حال تکمیل همین نوبت":`${new Intl.NumberFormat("fa-IR").format(remaining)} نوبت تازه باقی مونده`} · {new Intl.NumberFormat("fa-IR").format(ownTurns)} از {new Intl.NumberFormat("fa-IR").format(limit)} نوبت استفاده شده</span></div>}

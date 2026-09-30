@@ -449,7 +449,7 @@ test("the local API completes the legal consultation workflow securely", {
         amount: 1,
       },
     }), 201, "Create phone consultation");
-    assert.equal(phoneConsultation.amount, Number(bootstrap.settings.default_phone_price));
+    assert.equal(phoneConsultation.amount, Number(bootstrap.settings.phone_price_min));
     assert.notEqual(phoneConsultation.amount, 1);
     assert.equal(phoneConsultation.paymentStatus, "simulated_paid");
     assert.equal(phoneConsultation.status, "pending_coordination");
@@ -461,7 +461,7 @@ test("the local API completes the legal consultation workflow securely", {
     const phoneOrder = afterPhone.orders.find((item) => item.consultation_id === phoneConsultation.id);
     const phoneInDashboard = afterPhone.consultations.find((item) => item.id === phoneConsultation.id);
     assert.ok(phoneOrder);
-    assert.equal(phoneOrder.amount, Number(bootstrap.settings.default_phone_price));
+    assert.equal(phoneOrder.amount, Number(bootstrap.settings.phone_price_min));
     assert.equal(phoneOrder.status, "paid");
     assert.ok(phoneInDashboard.attachments.some((item) => item.id === phoneAttachment.document.id));
     assert.ok(!afterPhone.conversations.some((item) => item.consultation_id === phoneConsultation.id), "Phone consultation does not open a chat");
@@ -769,17 +769,27 @@ test("the local API completes the legal consultation workflow securely", {
     expectStatus(await api("/api/articles", { method: "POST", token: admin.token, body: { ...articlePayload, slug: "invalid-tag-workflow-article", tags: ["not-an-approved-tag"] } }), 400, "Article cannot introduce unapproved tags");
 
     const incompleteSpecialtyIds = [customSpecialty.id, bootstrap.services[0].id];
-    expectStatus(await api("/api/auth/register", { method: "POST", body: { username: "incomplete-lawyer", password: "Lawyer123!", firstName: "New", lastName: "Lawyer", phone: "09129876543", email: "new-lawyer@example.test", role: "lawyer", licenseNumber: "TEST-9898", specialtyIds: incompleteSpecialtyIds } }), 201, "Register a lawyer with multiple administrator-defined specialties");
+    expectStatus(await api("/api/auth/register", { method: "POST", body: { username: "incomplete-lawyer", password: "Lawyer123!", firstName: "New", lastName: "Lawyer", phone: "09129876543", email: "new-lawyer@example.test", role: "lawyer" } }), 201, "Register a lawyer without choosing specialties during sign-up");
     const incompleteLawyer = await login(api, "incomplete-lawyer", "Lawyer123!", "lawyer");
     const incompleteDashboard = expectStatus(await api("/api/dashboard", { token: incompleteLawyer.token }), 200, "Incomplete lawyer dashboard");
     assert.equal(incompleteDashboard.profile.profile_completed, 0);
     assert.equal(incompleteDashboard.documents.length, 0);
-    assert.deepEqual([...incompleteDashboard.profile.specialty_ids].sort((a, b) => a - b), [...incompleteSpecialtyIds].sort((a, b) => a - b));
-    assert.ok(incompleteDashboard.services.some((item) => item.id === customSpecialty.id && item.selected === 1));
-    expectStatus(await api("/api/admin/action", { method: "POST", token: admin.token, body: { action: "service-delete", id: customSpecialty.id } }), 409, "A linked specialty cannot be deleted");
+    assert.deepEqual(incompleteDashboard.profile.specialty_ids, []);
+    assert.ok(incompleteDashboard.services.every((item) => item.selected === 0));
     expectStatus(await api("/api/admin/action", { method: "POST", token: limitedAdmin.token, body: { action: "verify-lawyer", id: incompleteDashboard.profile.id, approved: true } }), 403, "Verification still requires administrator permission");
     assert.equal(expectStatus(await api("/api/admin/action", { method: "POST", token: admin.token, body: { action: "verify-lawyer", id: incompleteDashboard.profile.id, approved: true } }), 200, "Administrator can approve an incomplete lawyer").verified, true);
     assert.equal(expectStatus(await api("/api/admin/action", { method: "POST", token: admin.token, body: { action: "verify-lawyer", id: incompleteDashboard.profile.id, approved: false } }), 200, "Administrator can reject an incomplete lawyer").verified, false);
+    expectStatus(await api("/api/profile", { method: "POST", token: incompleteLawyer.token, body: {
+      firstName: "New", lastName: "Lawyer", phone: "09129876543", email: "new-lawyer@example.test",
+      province: "Tehran", city: "Tehran", licenseNumber: "TEST-9898", specialtyIds: incompleteSpecialtyIds,
+      bio: "A complete professional profile for the newly registered lawyer.",
+      phonePrice: Number(bootstrap.settings.phone_price_min), textPrice: Number(bootstrap.settings.text_price_min),
+      inPersonPrice: Number(bootstrap.settings.in_person_price_min),
+    } }), 200, "Lawyer chooses administrator-defined specialties in the profile panel");
+    const completedLawyerDashboard = expectStatus(await api("/api/dashboard", { token: incompleteLawyer.token }), 200, "Completed lawyer dashboard");
+    assert.deepEqual([...completedLawyerDashboard.profile.specialty_ids].sort((a, b) => a - b), [...incompleteSpecialtyIds].sort((a, b) => a - b));
+    assert.ok(completedLawyerDashboard.services.some((item) => item.id === customSpecialty.id && item.selected === 1));
+    expectStatus(await api("/api/admin/action", { method: "POST", token: admin.token, body: { action: "service-delete", id: customSpecialty.id } }), 409, "A linked specialty cannot be deleted");
 
     const notifications = expectStatus(await api("/api/dashboard", { token: client.token }), 200, "Client notifications");
     const answerNotification = notifications.notificationItems.find((item) => item.id === `answer-${answered.id}`);

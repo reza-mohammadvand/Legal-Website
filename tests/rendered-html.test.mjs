@@ -234,7 +234,7 @@ test("enforces question assignment, role guards, and server-side checkout", asyn
   const checkout = api.slice(consultationStart, consultationEnd);
   assert.doesNotMatch(checkout, /\bb\.amount\b/);
   assert.match(checkout, /lawyer\s*\[\s*`\$\{type\}_price`\s*\]/);
-  assert.match(checkout, /default_\$\{type\}_price/);
+  assert.match(checkout, /const\s+rangeMinimum\s*=\s*settingNumber\s*\(\s*`\$\{type\}_price_min`/);
   assert.match(checkout, /urgent_surcharge_percent/);
   assert.match(checkout, /Math\.round\(baseAmount\s*\*\s*urgentSurchargeRate\s*\/\s*100\)/);
   assert.match(checkout, /const\s+amount\s*=\s*baseAmount\s*\+\s*urgentSurchargeAmount/);
