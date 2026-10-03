@@ -531,11 +531,11 @@ function ContactPage({session,notify,settings}:any){
   <form className="contact-form-panel" onSubmit={submit}>
    <header><span className="contact-form-icon"><MessageCircleMore/></span><div><h2>برای ما بنویس</h2><p>نظراتت، بهبود ماست.</p></div></header>
    <div className="form-grid contact-form-grid">
-    <label>نام و نام خانوادگی *<span className="contact-control icon-right"><UserRound/><input name="name" required/></span></label>
-    <label>شماره همراه *<span className="contact-control icon-left"><Phone/><input name="phone" required inputMode="tel"/></span></label>
-    <label>نوع درخواست<span className="contact-control icon-left"><ChevronDown/><select name="kind"><option value="support">پشتیبانی</option><option value="complaint">شکایت</option><option value="cooperation">همکاری</option></select></span></label>
-    <label>موضوع *<span className="contact-control icon-left"><Tag/><input name="subject" required/></span></label>
-    <label className="full">متن پیام *<span className="contact-control contact-textarea icon-right"><PenLine/><textarea name="body" rows={6} required/></span></label>
+    <label className="floating-field"><span className="contact-control icon-left"><UserRound/><input name="name" required placeholder=" "/><span className="floating-label">نام و نام خانوادگی *</span></span></label>
+    <label className="floating-field"><span className="contact-control icon-left"><Phone/><input name="phone" required inputMode="tel" placeholder=" "/><span className="floating-label">شماره همراه *</span></span></label>
+    <label className="floating-field"><span className="contact-control icon-left"><ChevronDown/><select name="kind" defaultValue="" required><option value="" disabled hidden/><option value="support">پشتیبانی</option><option value="complaint">شکایت</option><option value="cooperation">همکاری</option></select><span className="floating-label">نوع درخواست *</span></span></label>
+    <label className="floating-field"><span className="contact-control icon-left"><Tag/><input name="subject" required placeholder=" "/><span className="floating-label">موضوع *</span></span></label>
+    <label className="floating-field full"><span className="contact-control contact-textarea icon-left"><PenLine/><textarea name="body" rows={6} required placeholder=" "/><span className="floating-label">متن پیام *</span></span></label>
    </div>
    <button type="submit" className="primary-button contact-submit">ارسال پیام <Send/></button>
   </form>
@@ -596,12 +596,12 @@ function AuthModal({close,onLogin,notify,settings,initialMode="login"}:any){
   <form onSubmit={submit}>
    {mode!=="forgot"&&<div className="login-roles" aria-label="انتخاب نقش">{(["client","lawyer",...(mode==="login"?["admin"]:[])] as Role[]).map(item=>{const detail=roleDetails[item];return <button type="button" className={role===item?"active":""} aria-pressed={role===item} key={item} onClick={()=>{setRole(item);setError("")}}>{detail.icon}<span><b>{detail.title}</b><small>{detail.note}</small></span><Check/></button>})}</div>}
    {mode==="register"&&<div className="form-grid">
-    <label>نام<input name="firstName" autoComplete="given-name" required/></label>
-    <label>نام خانوادگی<input name="lastName" autoComplete="family-name" required/></label>
-    <label>شماره موبایل<input name="phone" type="tel" inputMode="tel" autoComplete="tel" required placeholder="09123456789"/></label>
-    <label>ایمیل<input name="email" type="email" autoComplete="email" required/></label>
+    <label className="floating-field"><input name="firstName" autoComplete="given-name" required placeholder=" "/><span className="floating-label">نام</span></label>
+    <label className="floating-field"><input name="lastName" autoComplete="family-name" required placeholder=" "/><span className="floating-label">نام خانوادگی</span></label>
+    <label className="floating-field"><input name="phone" type="tel" inputMode="tel" autoComplete="tel" required placeholder=" "/><span className="floating-label">شماره موبایل</span></label>
+    <label className="floating-field"><input name="email" type="email" autoComplete="email" required placeholder=" "/><span className="floating-label">ایمیل</span></label>
    </div>}
-   {mode==="forgot"?<><p>شماره موبایلی که باهاش ثبت‌نام کردی رو بنویس.</p><label>شماره موبایل<input name="phone" type="tel" inputMode="tel" autoComplete="tel" required/></label></>:<><label>نام کاربری<input name="username" autoComplete="username" required/></label><label>رمز عبور<input name="password" type="password" autoComplete={mode==="login"?"current-password":"new-password"} required minLength={8}/></label></>}
+   {mode==="forgot"?<><p>شماره موبایلی که باهاش ثبت‌نام کردی رو بنویس.</p><label className="floating-field"><input name="phone" type="tel" inputMode="tel" autoComplete="tel" required placeholder=" "/><span className="floating-label">شماره موبایل</span></label></>:<><label className="floating-field"><input name="username" autoComplete="username" required placeholder=" "/><span className="floating-label">نام کاربری</span></label><label className="floating-field"><input name="password" type="password" autoComplete={mode==="login"?"current-password":"new-password"} required minLength={8} placeholder=" "/><span className="floating-label">رمز عبور</span></label></>}
    {error&&<p className="control-error" role="alert"><AlertCircle/>{error}</p>}
    {message&&<p className="notice-success" role="status">{message}</p>}
    <button className="primary-button full-button" disabled={busy}>{busy?"یه لحظه صبر کن...":mode==="forgot"?"درخواست بازیابی رمز":mode==="login"?"ورود به حساب":"ساخت حساب"}</button>

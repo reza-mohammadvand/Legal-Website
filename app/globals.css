@@ -51,7 +51,7 @@
 .admin-document-summary>b{color:var(--primary)}
 .admin-document-summary>span{color:var(--muted);font-size:8px}
 .admin-document-summary>small{grid-column:1/-1;color:var(--muted);overflow-wrap:anywhere}
-
+option{text-align: right;}
 .form-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:16px}
 .form-actions>small{margin-inline-start:auto;color:var(--muted);font-size:8px}
 .danger-button,.secondary-button{min-height:36px;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 12px;border-radius:4px;font-weight:700}
@@ -4213,7 +4213,9 @@ body:has(.consult-flow){overflow:hidden}
 [data-theme=dark] .lawyers-page .result-toolbar{border-color:rgba(124,184,219,.2);background:linear-gradient(145deg,rgba(32,52,70,.84),rgba(18,38,54,.76));box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 8px 18px rgba(0,0,0,.2)}
 [data-theme=dark] .lawyers-page .toggle-row>input{border-color:#66809a;background:#243f54}
 [data-theme=dark] .lawyers-page .filter-title>button:hover{background:rgba(190,56,50,.15);color:#ff9a91}
-
+* option::checkmark{
+  margin-inline-start:0!important;
+}
 @supports (appearance:base-select){
   .lawyers-page .filters select::picker(select){direction:rtl;text-align:right}
   .lawyers-page .filters select:not([multiple])::picker-icon{
@@ -4226,7 +4228,7 @@ body:has(.consult-flow){overflow:hidden}
   }
   .lawyers-page .filters select:not([multiple]):open::picker-icon{transform:rotate(180deg)}
   .lawyers-page .filters select:not([multiple]) option{direction:rtl;text-align:right;justify-content:flex-start}
-  .lawyers-page .filters select:not([multiple]) option::checkmark{margin-inline-start:auto;margin-inline-end:0}
+  .lawyers-page .filters select:not([multiple]) option::checkmark{margin-inline-start:0;margin-inline-end:0}
 }
 
 @media(max-width:1100px){
@@ -6991,18 +6993,20 @@ select:not([multiple]){text-align-last:right}
   }
   select:not([multiple])::picker-icon{
     content:"";
-    width:9px;
-    height:9px;
+    width:18px;
+    height:18px;
     margin-inline-start:auto;
-    flex:0 0 9px;
-    border-right:2px solid currentColor;
-    border-bottom:2px solid currentColor;
+    flex:0 0 18px;
+    border:0;
+    background:currentColor;
     color:#1748a6;
-    transform:rotate(45deg);
+    -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center/contain no-repeat;
+    mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center/contain no-repeat;
+    transform:rotate(0);
     transform-origin:center;
     transition:transform .2s,color .2s;
   }
-  select:not([multiple]):open::picker-icon{color:#087c91;transform:rotate(225deg)}
+  select:not([multiple]):open::picker-icon{color:#087c91;transform:rotate(180deg)}
   select:not([multiple]) option{justify-content:flex-start;text-align:right}
   select:not([multiple]) option::checkmark{margin-inline-start:auto;margin-inline-end:0}
   .contact-page .contact-control>select::picker-icon{display:none}
@@ -7029,11 +7033,11 @@ select:not([multiple]){text-align-last:right}
 }
 :root input[type=checkbox]:before{
   content:"";
-  width:9px;
-  height:5px;
+  width:5px;
+  height:10px;
   border-right:2px solid #fff;
   border-bottom:2px solid #fff;
-  transform:rotate(45deg) scale(0);
+  transform:translateY(-1px) rotate(45deg) scale(0);
   transition:transform .15s ease-out;
 }
 :root input[type=checkbox]:hover:not(:disabled){border-color:#2659b8;box-shadow:inset 0 1px 0 #fff,0 0 0 4px rgba(38,89,184,.1),0 5px 11px rgba(18,75,145,.12)!important}
@@ -7042,7 +7046,7 @@ select:not([multiple]){text-align-last:right}
   background:linear-gradient(145deg,#3477d8,#163d9d 63%,#0c287d);
   box-shadow:inset 0 1px 0 rgba(255,255,255,.3),0 0 0 3px rgba(239,191,4,.2),0 6px 12px rgba(13,55,132,.2)!important;
 }
-:root input[type=checkbox]:checked:before{transform:rotate(45deg) scale(1)}
+:root input[type=checkbox]:checked:before{transform:translateY(-1px) rotate(45deg) scale(1)}
 :root input[type=checkbox]:focus-visible{outline:2px solid #efbf04!important;outline-offset:3px}
 :root input[type=checkbox]:disabled{cursor:not-allowed;opacity:.55}
 .lawyers-page .toggle-row>input{width:22px!important;min-width:22px!important;height:22px!important;min-height:22px!important}
@@ -7056,19 +7060,21 @@ select:not([multiple]){text-align-last:right}
 /* Icon-bearing inputs reserve space on the icon side in RTL layouts. */
 .app-shell.app-shell .input-icon>svg,
 .dashboard.dashboard .input-icon>svg{
-  inset-inline-start:14px;
+  inset-inline-start:auto;
   inset-inline-end:auto;
-  width:19px;
-  height:19px;
+  right:auto;
+  left:11px;
+  width:17px;
+  height:17px;
   z-index:2;
   pointer-events:none;
 }
 .app-shell.app-shell .input-icon>input,
-.dashboard.dashboard .input-icon>input{padding-inline-start:46px;padding-inline-end:13px}
+.dashboard.dashboard .input-icon>input{padding-right:13px!important;padding-left:35px!important}
 
 /* Question topics are visually distinct from the body of each question. */
-.questions-page .question-card>header>.question-topic{
-  max-width:min(72%,330px);
+.questions-page .question-card>header>.question-topic,
+.app-shell.app-shell:has(.home-hero) .questions-showcase .question-list-home .question-card>header>.question-topic{
   min-height:31px;
   padding:6px 11px;
   display:inline-flex;
@@ -7086,27 +7092,151 @@ select:not([multiple]){text-align-last:right}
   text-overflow:ellipsis;
   white-space:nowrap;
 }
-.questions-page .question-card>header>.question-topic>svg{width:15px;height:15px;flex:0 0 15px;color:#ffe04d;stroke-width:2.3}
-[data-theme=dark] .questions-page .question-card>header>.question-topic{border-color:#4d85cb;background:linear-gradient(145deg,#28558f,#183b69);color:#f1f7ff;box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 7px 15px rgba(0,0,0,.25)}
+.questions-page .question-card>header>.question-topic>svg,
+.app-shell.app-shell:has(.home-hero) .questions-showcase .question-list-home .question-card>header>.question-topic>svg{width:15px;height:15px;flex:0 0 15px;color:#ffe04d;stroke-width:2.3}
+[data-theme=dark] .questions-page .question-card>header>.question-topic,
+[data-theme=dark] .app-shell.app-shell:has(.home-hero) .questions-showcase .question-list-home .question-card>header>.question-topic{border-color:#4d85cb;background:linear-gradient(145deg,#28558f,#183b69);color:#f1f7ff;box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 7px 15px rgba(0,0,0,.25)}
 
-/* Auth fields share one grid, equal heights, and aligned label rows. */
+/* Contact controls share one size and keep every field icon on the left. */
+.contact-page .contact-form-grid{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}
+.contact-page .contact-form-grid>label.floating-field{
+  min-width:0;
+  min-height:54px;
+  display:block;
+  position:relative;
+}
+.contact-page .contact-control{width:100%;min-width:0;height:54px}
+.contact-page .contact-control.contact-textarea{height:auto}
+.contact-page .contact-control>svg{
+  right:auto!important;
+  left:16px!important;
+}
+.contact-page .contact-control>:is(input,select){
+  width:100%;
+  height:54px;
+  min-height:54px;
+  box-sizing:border-box;
+  padding:10px 16px 10px 48px!important;
+}
+.contact-page .contact-control>textarea{
+  width:100%;
+  height:158px;
+  min-height:158px;
+  box-sizing:border-box;
+  padding:15px 16px 15px 48px!important;
+}
+.contact-page .contact-textarea>svg{top:17px;transform:none}
+.contact-page .contact-control>.floating-label{
+  position:absolute;
+  z-index:3;
+  top:50%;
+  right:16px;
+  max-width:calc(100% - 72px);
+  padding:0;
+  overflow:hidden;
+  border:1px solid transparent;
+  border-radius:6px;
+  background:transparent;
+  color:#627696;
+  font-size:12px;
+  font-weight:700;
+  line-height:1.6;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  pointer-events:none;
+  transform:translateY(-50%);
+  transform-origin:right center;
+  transition:top .18s ease,transform .18s ease,font-size .18s ease,color .18s ease,padding .18s ease,background .18s ease,border-color .18s ease;
+}
+.contact-page .contact-textarea>.floating-label{top:25px}
+.contact-page .contact-control:has(>input:focus)>.floating-label,
+.contact-page .contact-control:has(>input:not(:placeholder-shown))>.floating-label,
+.contact-page .contact-control:has(>input:autofill)>.floating-label,
+.contact-page .contact-control:has(>input:-webkit-autofill)>.floating-label,
+.contact-page .contact-control:has(>textarea:focus)>.floating-label,
+.contact-page .contact-control:has(>textarea:not(:placeholder-shown))>.floating-label,
+.contact-page .contact-control:has(>select:focus)>.floating-label,
+.contact-page .contact-control:has(>select:valid)>.floating-label{
+  top:0;
+  padding:2px 7px;
+  border-color:rgba(82,160,210,.32);
+  background:linear-gradient(180deg,#f9fdff,#e8f5fd);
+  color:#1748a6;
+  font-size:10px;
+  transform:translateY(-50%);
+  box-shadow:0 2px 6px rgba(20,94,151,.07);
+}
+.contact-page .floating-field :is(input,textarea)::placeholder{color:transparent}
+
+@media(max-width:780px){
+  .contact-page .contact-form-grid{grid-template-columns:1fr}
+}
+
+/* Auth fields share one grid and use the same floating-label interaction. */
 .auth-modal{width:min(500px,calc(100vw - 40px))}
 .auth-modal.auth-register{width:min(660px,calc(100vw - 40px))}
-.auth-modal form>label,
-.auth-modal form>.form-grid>label{
+.auth-modal form>label.floating-field,
+.auth-modal form>.form-grid>label.floating-field{
   min-width:0;
-  display:grid;
-  grid-template-rows:minmax(23px,auto) 48px;
-  align-content:start;
-  align-items:stretch;
-  gap:7px;
+  min-height:48px;
+  display:block;
+  position:relative;
   white-space:normal;
 }
-.auth-modal form>label>:is(input,select),
-.auth-modal form>.form-grid>label>:is(input,select){height:48px;min-height:48px}
+.auth-modal .floating-field>input{height:48px;min-height:48px;padding-inline:14px!important}
+.auth-modal .floating-field>.floating-label{
+  position:absolute;
+  z-index:2;
+  top:50%;
+  right:14px;
+  max-width:calc(100% - 28px);
+  padding:0;
+  overflow:hidden;
+  border:1px solid transparent;
+  border-radius:6px;
+  background:transparent;
+  color:#6d809e;
+  font-size:12px;
+  font-weight:700;
+  line-height:1.6;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  pointer-events:none;
+  transform:translateY(-50%);
+  transform-origin:right center;
+  transition:top .18s ease,transform .18s ease,font-size .18s ease,color .18s ease,padding .18s ease,background .18s ease,border-color .18s ease;
+}
+.auth-modal .floating-field:has(>input:focus)>.floating-label,
+.auth-modal .floating-field:has(>input:not(:placeholder-shown))>.floating-label,
+.auth-modal .floating-field:has(>input:autofill)>.floating-label,
+.auth-modal .floating-field:has(>input:-webkit-autofill)>.floating-label{
+  top:0;
+  padding:2px 7px;
+  border-color:rgba(82,160,210,.32);
+  background:linear-gradient(180deg,#f9fdff,#e8f5fd);
+  color:#1748a6;
+  font-size:10px;
+  transform:translateY(-50%);
+  box-shadow:0 2px 6px rgba(20,94,151,.07);
+}
+.auth-modal .floating-field>input::placeholder{color:transparent}
 .auth-modal.auth-register form{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:14px;align-items:start}
 .auth-modal.auth-register form>.form-grid{display:contents}
 .auth-modal.auth-register form>:is(.login-roles,.control-error,.notice-success,.primary-button,.forgot-link){grid-column:1/-1}
+
+[data-theme=dark] :is(.contact-page .contact-control,.auth-modal .floating-field):has(>input:focus)>.floating-label,
+[data-theme=dark] :is(.contact-page .contact-control,.auth-modal .floating-field):has(>input:not(:placeholder-shown))>.floating-label,
+[data-theme=dark] :is(.contact-page .contact-control,.auth-modal .floating-field):has(>input:autofill)>.floating-label,
+[data-theme=dark] :is(.contact-page .contact-control,.auth-modal .floating-field):has(>input:-webkit-autofill)>.floating-label,
+[data-theme=dark] .contact-page .contact-control:has(>textarea:focus)>.floating-label,
+[data-theme=dark] .contact-page .contact-control:has(>textarea:not(:placeholder-shown))>.floating-label,
+[data-theme=dark] .contact-page .contact-control:has(>select:focus)>.floating-label,
+[data-theme=dark] .contact-page .contact-control:has(>select:valid)>.floating-label{
+  border-color:rgba(111,188,219,.34);
+  background:linear-gradient(180deg,#29465a,#1b3448);
+  color:#91dcea;
+  box-shadow:0 3px 8px rgba(0,0,0,.2);
+}
 
 @media(max-width:600px){
   .auth-modal.auth-register form{grid-template-columns:1fr}
